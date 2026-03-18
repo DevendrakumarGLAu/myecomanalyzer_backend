@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.sqlite3
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# Environment variables
+.env
+
+# Django stuff
+*.log
+staticfiles/
+media/
+
+# Migrations (optional — depends on your workflow)
+# */migrations/*
+# !*/migrations/__init__.py
+
+# FastAPI / general
+*.db
+
+# IDEs
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build
+build/
+dist/
+*.egg-info/
+__pycache__/
+*.pyc
+core/__init__.py
