@@ -35,17 +35,13 @@ class ProductController:
         search: Optional[str] = None,
         platform: Optional[int] = None
     ):
-
         try:
-
             filters = {
                 "owner": current_user,
                 "is_active": True
             }
-
             if platform:
                 filters["platform__code"] = platform
-
             query = (
                 Product.objects
                 .filter(**filters)
@@ -66,7 +62,6 @@ class ProductController:
             )
 
             if search:
-
                 variant_product_ids = ProductVariant.objects.filter(
                     sku__icontains=search
                 ).values_list("product_id", flat=True)
@@ -88,7 +83,11 @@ class ProductController:
                 # get first variant SKU if available
                 sku = p.variants.first().sku if p.variants.exists() else None
                 category_name = p.category.name if p.category else None
-
+                color= p.variants.first().color if p.variants.exists() else None
+                cost_price = p.variants.first().cost_price if p.variants.exists() else None
+                stock = p.variants.first().stock if p.variants.exists() else None
+                selling_price = p.variants.first().selling_price if p.variants.exists() else None
+                
                 items.append(
                     ProductResponse(
                         id=p.id,
@@ -97,6 +96,10 @@ class ProductController:
                         category_id=p.category_id,
                         category_name=category_name,   # added category name
                         sku=sku,                  # added SKU
+                        color=color,
+                        cost_price=cost_price,
+                        selling_price=selling_price,
+                        stock=stock,
                         platform_code=p.platform.code if p.platform else None,
                         gst_percent=float(p.gst_percent),
                         commission_percent=float(p.commission_percent),
@@ -119,17 +122,20 @@ class ProductController:
                 detail=f"Error fetching products: {str(e)}"
             )
 
-    from django.db import transaction
 
     @staticmethod
-    def add_product(payload: ProductRequest, current_user: User):
+    def add_product(payload: ProductRequest, current_user):
         try:
             with transaction.atomic():
 
+                # Get platform
                 platform_obj = None
                 if payload.platform_code:
-                    platform_obj = Platform.objects.filter(code=payload.platform_code).first()
+                    platform_obj = Platform.objects.filter(
+                        code=payload.platform_code
+                    ).first()
 
+                # Create product
                 product = Product.objects.create(
                     catalog_id=payload.catalog_id,
                     name=payload.name,
@@ -143,29 +149,30 @@ class ProductController:
                     is_active=payload.is_active
                 )
 
-                variants = []
-                for variant in payload.variants:
-                    variants.append(
-                        ProductVariant(
-                            product=product,
-                            sku=variant.sku,
-                            size=variant.size,
-                            color=variant.color,
-                            cost_price=variant.cost_price,
-                            selling_price=variant.selling_price,
-                            stock=variant.stock,
-                            shipping_cost=variant.shipping_cost or 0.0,
-                            rto_cost=variant.rto_cost or 0.0
-                        )
+                # Create variants
+                variants = [
+                    ProductVariant(
+                        product=product,
+                        sku=v.sku,
+                        size=v.size,
+                        color=v.color,
+                        cost_price=v.cost_price,
+                        selling_price=v.selling_price,
+                        stock=v.stock,
+                        shipping_cost=v.shipping_cost or 0.0,
+                        rto_cost=v.rto_cost or 0.0
                     )
+                    for v in payload.variants
+                ]
 
                 ProductVariant.objects.bulk_create(variants)
 
-                product = Product.objects.prefetch_related("variants").get(id=product.id)
-
-                return product
+                return ProductController.build_product_response(product)
 
         except Exception as e:
+            import traceback
+            print(traceback.format_exc())
+
             raise HTTPException(
                 status_code=500,
                 detail=f"Error while creating product: {str(e)}"
@@ -221,23 +228,35 @@ class ProductController:
 
             # Prefetch variants for response
             product = Product.objects.prefetch_related("variants").get(id=product.id)
-
+            sku = product.variants.first().sku if product.variants.exists() else None
+            category_name = product.category.name if product.category else None
+            color= product.variants.first().color if product.variants.exists() else None
+            cost_price = product.variants.first().cost_price if product.variants.exists() else None
+            selling_price = product.variants.first().selling_price if product.variants.exists() else None
+            stock = product.variants.first().stock if product.variants.exists() else None
+            catalog_id = product.catalog_id if product.catalog_id else None
+            platform_code = product.platform.code if product.platform else None
             # Convert to Pydantic schema
             product_response = ProductResponse(
-                id=product.id,
-                catalog_id=product.catalog_id,
-                name=product.name,
-                category_id=product.category_id,
-                marketplace=product.platform_id,
-                gst_percent=float(product.gst_percent),
-                commission_percent=float(product.commission_percent),
-                is_active=product.is_active,
-                variants=[
-                    ProductVariantResponse.model_validate(v)
-                    for v in product.variants.all()
-                ]
-            )
-
+                    id=product.id,
+                    catalog_id=product.catalog_id,
+                    name=product.name,
+                    category_id=product.category_id,
+                    category_name=category_name,  # ✅ ADD THIS
+                    platform_code=product.platform.code if product.platform else None,  # ✅ also fix this
+                    gst_percent=float(product.gst_percent),
+                    commission_percent=float(product.commission_percent),
+                    sku=sku,
+                    color=color,
+                    cost_price=cost_price,
+                    selling_price=selling_price,
+                    stock=stock,
+                    is_active=product.is_active,
+                    variants=[
+                        ProductVariantResponse.model_validate(v)
+                        for v in product.variants.all()
+                    ]
+                )
             return product_response
 
         except Exception as e:
@@ -267,191 +286,34 @@ class ProductController:
         product.save()
         return product
 
+    def build_product_response(product):
+        product = Product.objects.prefetch_related(
+            "variants", "category", "platform"
+        ).get(id=product.id)
 
-# from typing import Optional
-# from django.contrib.auth.models import User
-# from products.models import Product, ProductVariant
-# from fastapi import HTTPException
-# from api.schemas.product_schema import ProductRequest, ProductResponse, ProductUpdateRequest, ProductVariantResponse
-# from django.db.models import Q
-# from django.db import transaction
+        first_variant = product.variants.first()
 
-# class ProductController:
+        return ProductResponse(
+            id=product.id,
+            catalog_id=product.catalog_id,
+            name=product.name,
+            category_id=product.category_id,
+            category_name=product.category.name if product.category else None,
+            platform_code=product.platform.code if product.platform else None,
+            gst_percent=float(product.gst_percent),
+            commission_percent=float(product.commission_percent),
+            is_active=product.is_active,
 
-#     @staticmethod
-#     def get_product_by_id(product_id: int, current_user: User):
-#         """
-#         Fetch single product for current user
-#         Return [] if not found
-#         """
-#         product = Product.objects.filter(
-#             id=product_id, 
-#             created_by=current_user, 
-#             is_active=True
-#         ).first()  # returns None if not found
+            # First variant data
+            sku=first_variant.sku if first_variant else None,
+            color=first_variant.color if first_variant else None,
+            cost_price=first_variant.cost_price if first_variant else 0,
+            selling_price=first_variant.selling_price if first_variant else 0,
+            stock=first_variant.stock if first_variant else 0,
 
-#         if not product:
-#             return []  # return empty list instead of raising 404
-
-#         return product
-
-
-#     @staticmethod
-#     def get_all_products(
-#         current_user: User,
-#         page: int = 1,
-#         limit: int = 10,
-#         search: Optional[str] = None,
-#         platform: Optional[str] = None
-#     ):
-
-#         try:
-#             filters = {
-#                 "owner": current_user,
-#                 "is_active": True
-#             }
-
-#             if platform:
-#                 filters["platform"] = platform
-
-#             query = (
-#                 Product.objects
-#                 .filter(**filters)
-#                 .select_related("category")
-#                 .prefetch_related("variants")
-#             )
-
-#             if search:
-#                 search_query = (
-#                     Q(name__icontains=search) |
-#                     Q(catalog_id__icontains=search) |
-#                     Q(category__name__icontains=search) |
-#                     Q(variants__sku__icontains=search)
-#                 )
-
-#                 query = query.filter(search_query).distinct()
-
-#             total = query.count()
-
-#             start = (page - 1) * limit
-#             end = start + limit
-
-#             products = query[start:end]
-
-#             items = []
-
-#             for p in products:
-#                 items.append(
-#                     ProductResponse(
-#                         id=p.id,
-#                         catalog_id=p.catalog_id,
-#                         name=p.name,
-#                         category_id=p.category_id,
-#                         is_active=p.is_active,
-#                         variants=[
-#                             ProductVariantResponse.model_validate(v)
-#                             for v in p.variants.all()
-#                         ]
-#                     )
-#                 )
-
-#             return {
-#                 "items": items,
-#                 "total": total,
-#                 "page": page,
-#                 "limit": limit
-#             }
-
-#         except Exception as e:
-#             raise HTTPException(
-#                 status_code=500,
-#                 detail=f"Error fetching products: {str(e)}"
-#             )
-        
-    
-#     @staticmethod
-#     def update_product_logic(product_id: int, payload: ProductUpdateRequest, current_user: User):
-
-#         try:
-#             with transaction.atomic():
-
-#                 product = ProductController.get_product_by_id(product_id, current_user)
-
-#                 update_data = payload.dict(exclude_unset=True)
-
-#                 # ---- Update Product Fields ----
-#                 for field, value in update_data.items():
-#                     if field != "variants":
-#                         setattr(product, field, value)
-
-#                 product.updated_by = current_user
-#                 product.save()
-
-#                 # ---- Update Variants ONLY if provided ----
-#                 if "variants" in update_data:
-
-#                     # Option 1 (simple replace)
-#                     product.variants.all().delete()
-
-#                     for variant in update_data["variants"]:
-#                         ProductVariant.objects.create(
-#                             product=product,
-#                             sku=variant["sku"],
-#                             size=variant.get("size"),
-#                             color=variant.get("color"),
-#                             cost_price=variant["cost_price"],
-#                             selling_price=variant["selling_price"],
-#                             stock=variant["stock"]
-#                         )
-
-#             return {
-#                 "success": True,
-#                 "message": "Product updated successfully",
-#                 "data": product
-#             }
-
-#         except Product.DoesNotExist:
-#             raise HTTPException(status_code=404, detail="Product not found")
-
-#         except Exception as e:
-#             raise HTTPException(
-#                 status_code=500,
-#                 detail=f"Error while updating product: {str(e)}"
-#             )
-
-    
-
-#     @staticmethod
-#     def add_product(payload: ProductRequest, current_user: User):
-#         try:
-#             product = Product.objects.create(
-#                 catalog_id=payload.catalog_id,
-#                 name=payload.name,
-#                 category_id=payload.category_id,
-#                 owner=current_user,
-#                 created_by=current_user,
-#                 updated_by=current_user,
-#                 is_active=payload.is_active
-#             )
-
-#             for variant in payload.variants:
-#                 ProductVariant.objects.create(
-#                     product=product,
-#                     sku=variant.sku,
-#                     size=variant.size,
-#                     color=variant.color,
-#                     cost_price=variant.cost_price,
-#                     selling_price=variant.selling_price,
-#                     stock=variant.stock
-#                 )
-
-#             # load variants for response
-#             product = Product.objects.prefetch_related("variants").get(id=product.id)
-
-#             return product
-
-#         except Exception as e:
-#             raise HTTPException(
-#                 status_code=500,
-#                 detail=f"Error while creating product: {str(e)}"
-#             )
+            # Variants list
+            variants=[
+                ProductVariantResponse.model_validate(v)
+                for v in product.variants.all()
+            ]
+        )

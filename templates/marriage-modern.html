@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body {
+      font-family: Arial;
+      padding: 30px;
+    }
+    h1 {
+      text-align: center;
+      color: #c2185b;
+    }
+    .section {
+      margin-top: 20px;
+    }
+    .label {
+      font-weight: bold;
+    }
+  </style>
+</head>
+
+<body>
+
+<h1>{{ personal.name }}</h1>
+
+<div class="section">
+  <p><span class="label">DOB:</span> {{ personal.dob }}</p>
+  <p><span class="label">Height:</span> {{ personal.height }}</p>
+  <p><span class="label">Religion:</span> {{ personal.religion }}</p>
+</div>
+
+<div class="section">
+  <h3>Family</h3>
+  <p>Father: {{ family.father }}</p>
+  <p>Mother: {{ family.mother }}</p>
+</div>
+
+<div class="section">
+  <h3>Siblings</h3>
+  {% for s in siblings %}
+    <p>{{ s.relation }} - {{ s.name }} ({{ s.occupation }})</p>
+  {% endfor %}
+</div>
+
+{% if personal.photo %}
+  <div class="section">
+    <img src="{{ personal.photo }}" style="width:120px; border-radius:10px;">
+  </div>
+{% endif %}
+
+</body>
+</html>

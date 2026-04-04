@@ -42,6 +42,11 @@ class ProductResponse(BaseModel):
     gst_percent: float = 0.0
     commission_percent: float = 0.0
     is_active: bool
+    sku:str
+    color: Optional[str] = None
+    cost_price: float
+    selling_price: float
+    stock: int
     variants: List[ProductVariantResponse]
 
     class Config:

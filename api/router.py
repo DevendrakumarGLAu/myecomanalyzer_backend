@@ -42,3 +42,13 @@ router.include_router(db_dump_router, prefix="/db", tags=["Database"])
 # db
 from api.v_1.apis_endpoint.csv_dump import router as db_csv_router
 router.include_router(db_csv_router, prefix="/db", tags=["Database"])
+
+# F:\project\ecomm-profit\backend\api\v_1\apis_endpoint\marriage_biodata_v1.py
+# marriage
+
+
+from api.v_1.apis_endpoint.marriage_auth_v1 import router as marriage_auth_router
+router.include_router(marriage_auth_router, prefix="/marriage", tags=["Marriage Auth"])
+
+from api.v_1.apis_endpoint.marriage_biodata_v1 import router as marriage_biodata_router
+router.include_router(marriage_biodata_router, prefix="/marriage", tags=["Marriage Biodata"])

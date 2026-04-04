@@ -54,6 +54,8 @@ INSTALLED_APPS = [
     'orders_status',
     'marketplace',
     'payments',
+    'marriage_user_auth',
+    'marriage_biodata',
 ]
 
 MIDDLEWARE = [

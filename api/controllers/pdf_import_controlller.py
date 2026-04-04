@@ -25,7 +25,7 @@ class InvoiceExtractController:
             raise ValueError("Sub-order ID not found")
 
         marketplace_sub_order_id = sub_order_match.group(1)
-        marketplace_order_id = marketplace_sub_order_id.split("_")[0]
+        marketplace_order_id = marketplace_sub_order_id
 
         amount_match = re.search(r'Total\s+Rs\.0\.00\s+Rs\.(\d+\.\d+)', text)
         selling_price = float(amount_match.group(1)) if amount_match else 0.0
@@ -51,12 +51,11 @@ class InvoiceExtractController:
     
     @staticmethod
     def extract_product_from_text(text, marketplace_sub_order_id):
-        print(text)
         if not text:
             raise ValueError("Empty page text")
 
         lines = [line.strip() for line in text.splitlines() if line.strip()]
-
+        # print(lines)
         for line in lines:
             if marketplace_sub_order_id in line:
                 # Example line:
@@ -64,18 +63,16 @@ class InvoiceExtractController:
 
                 parts = line.split()
 
-                if len(parts) < 2:
+                if len(parts) < 5:
                     continue
 
                 sku = parts[0]
+                size = parts[1]
+                quantity = int(parts[2]) if parts[2].isdigit() else 1
+                color = parts[3]
+                order_id = parts[4]
 
-                quantity = 1
-                for value in parts[1:]:
-                    if value.isdigit():
-                        quantity = int(value)
-                        break
-
-                return sku, quantity
+                return sku, size, quantity, color
 
         raise ValueError(
             f"Product row not found for order {marketplace_sub_order_id}"
@@ -113,7 +110,9 @@ class InvoiceExtractController:
     # --------------------------------------------------
     @staticmethod
     def save_invoice_to_db(file_path, platform_code, current_user):
-
+        import pandas as pd
+        import os
+        error_file_url = None
         # Validate platform early and return an explicit error if not found
         try:
             platform = Platform.objects.get(code=platform_code)
@@ -145,16 +144,23 @@ class InvoiceExtractController:
 
                     data = InvoiceExtractController.parse_invoice_data(text)
 
-                    sku, quantity = InvoiceExtractController.extract_product_from_text(
-                        text, data["marketplace_sub_order_id"]
-                    )
+                    # sku, quantity = InvoiceExtractController.extract_product_from_text(
+                    #     text, data["marketplace_sub_order_id"]
+                    # )
+                    sku, size, quantity, color = InvoiceExtractController.extract_product_from_text(
+                            text, data["marketplace_sub_order_id"]
+                        )
 
                     data["sku"] = sku
+                    data["size"] = size
+                    data["color"] = color
                     data["quantity"] = quantity
-
-                    order_date = InvoiceExtractController.extract_order_date_from_text(
-                        text, data["marketplace_sub_order_id"]
-                    )
+                    try:
+                        order_date = InvoiceExtractController.extract_order_date_from_text(
+                            text, data["marketplace_sub_order_id"]
+                        )
+                    except Exception:
+                        order_date = datetime.today().date()
 
                     # 🔁 DUPLICATE CHECK
                     if Order.objects.filter(
@@ -167,7 +173,32 @@ class InvoiceExtractController:
                         continue
 
                     # product = Product.objects.get(sku=data["sku"])
-                    variant = ProductVariant.objects.select_related("product").get(sku=data["sku"])
+                    # variant = ProductVariant.objects.select_related("product").get(sku=data["sku"])
+                    try:
+                        variant = ProductVariant.objects.select_related("product").filter(
+                            sku=data["sku"],
+                            size=data.get("size"),
+                            color=data.get("color")
+                        ).first()
+                        
+                        if not variant:   # ✅ ADD THIS CHECK
+                            error_orders.append({
+                                "order_id": data.get("marketplace_sub_order_id"),
+                                "sku": data.get("sku"),
+                                "size": data.get("size"),
+                                "color": data.get("color"),
+                                "reason": "Variant not found (size/color mismatch)"
+                            })
+                            continue
+
+                    except Exception as e:
+                        error_orders.append({
+                            "order_id": data.get("marketplace_sub_order_id", f"page-{idx}"),
+                            "sku": data.get("sku"),
+                            "size": data.get("size"),
+                            "color": data.get("color"),
+                            "reason": str(e)   # ✅ always use "reason"
+                        })
 
                     product = variant.product
 
@@ -208,15 +239,42 @@ class InvoiceExtractController:
 
                 except ProductVariant.DoesNotExist:
                     error_orders.append({
-                        "order_id": data.get("marketplace_sub_order_id", f"page-{idx}"),
-                        "error": "SKU not found"
+                        "order_id": data.get("marketplace_sub_order_id"),
+                        "sku": data.get("sku"),
+                        "size": data.get("size"),
+                        "color": data.get("color"),
+                        "reason": str(e)   # ✅ changed key from "error" → "reason"
                     })
 
                 except Exception as e:
                     error_orders.append({
                         "order_id": data.get("marketplace_sub_order_id", f"page-{idx}"),
-                        "error": str(e)
+                        "sku": data.get("sku"),
+                        "size": data.get("size"),
+                        "color": data.get("color"),
+                        "reason": str(e)
                     })
+                    
+        if error_orders:
+            formatted_errors = []
+
+            for err in error_orders:
+                formatted_errors.append({
+                    "Order ID": err.get("order_id", ""),
+                    "SKU": err.get("sku", ""),
+                    "Size": err.get("size", ""),
+                    "Color": err.get("color", ""),
+                    "Error Reason": err.get("reason") or err.get("error", "")
+                })
+            df = pd.DataFrame(formatted_errors)
+            df = df.sort_values(by="Order ID")
+            # ✅ SAVE FILE
+            file_name = f"error_report.xlsx"
+            file_path = os.path.join("media", file_name)
+
+            df.to_excel(file_path, index=False)
+
+            error_file_url = "/media/" + file_name
 
         return {
             "summary": {
@@ -228,5 +286,6 @@ class InvoiceExtractController:
             },
             "imported_orders": imported_orders,
             "duplicate_orders": duplicate_orders,
-            "error_orders": error_orders
+            "error_orders": error_orders,
+            "error_file": error_file_url
         }

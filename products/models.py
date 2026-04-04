@@ -40,4 +40,7 @@ class ProductVariant(models.Model):
 
     class Meta:
         db_table = "product_variants"
-        unique_together = ('product', 'size', 'color')
+        unique_together = ('product', 'sku', 'size', 'color')
+        indexes = [
+        models.Index(fields=["sku", "size", "color"]),
+    ]
