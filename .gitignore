@@ -38,3 +38,5 @@ dist/
 __pycache__/
 *.pyc
 core/__init__.py
+
+.env
