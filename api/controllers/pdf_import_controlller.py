@@ -7,10 +7,32 @@ from platforms.models import Platform
 from marketplace.models import MarketplaceOrder
 from orders.models import Order, OrderStatus
 from products.models import Product, ProductVariant
+from django.db.models import Q
+from django.utils.dateparse import parse_date
 
+from io import StringIO
+import csv
+from datetime import datetime
+from django.db import transaction
+from orders.models import OrderStatus
 
+# Optional: mapping CSV status values to internal codes
+STATUS_MAPPING = {
+    "DELIVERED": "DELIVERED",
+    "CANCELLED": "CANCELLED",
+    "RTO_LOCKED": "RTO_COMPLETE",
+    "RTO_COMPLETE": "RTO_COMPLETE",
+    "PLACED": "PLACED",
+    "LOST": "LOST",
+    "SHIPPED": "SHIPPED",
+    "READY_TO_SHIP": "READY_TO_SHIP",
+    "DOOR_STEP_EXCHANGED": "DOOR_STEP_EXCHANGED",
+    # optional
+    "PLACED": "READY_TO_SHIP",
+    
+}
 class InvoiceExtractController:
-
+    
 
    # --------------------------------------------------
     # 2. PARSE PAGE TEXT
@@ -123,11 +145,10 @@ class InvoiceExtractController:
                 "error": f"Platform matching query does not exist for code '{platform_code}'.",
                 "data": None
             }
-
         status, _ = OrderStatus.objects.get_or_create(
-            code="PLACED",
+            code="READY_TO_SHIP",
             defaults={
-                "label": "Placed",
+                "label": "Ready To Ship",
                 "created_by": current_user,
                 "updated_by": current_user
             }
@@ -161,6 +182,8 @@ class InvoiceExtractController:
                         )
                     except Exception:
                         order_date = datetime.today().date()
+                        
+                    
 
                     # 🔁 DUPLICATE CHECK
                     if Order.objects.filter(
@@ -190,6 +213,7 @@ class InvoiceExtractController:
                                 "reason": "Variant not found (size/color mismatch)"
                             })
                             continue
+               
 
                     except Exception as e:
                         error_orders.append({
@@ -228,6 +252,7 @@ class InvoiceExtractController:
                         marketplace_order=marketplace_order,
                         marketplace_sub_order_id=data["marketplace_sub_order_id"],
                         product=product,
+                        variant=variant,
                         quantity=data["quantity"],
                         selling_price=data["selling_price"],
                         status=status,
@@ -288,4 +313,175 @@ class InvoiceExtractController:
             "duplicate_orders": duplicate_orders,
             "error_orders": error_orders,
             "error_file": error_file_url
+        }
+        
+    def process_meesho_invoice(platform_code,page,limit,search,status,state,sku,start_date,end_date,sort_by,order):
+        try:
+            """
+            Get order dispatch data with:
+            - Product name
+            - SKU
+            - Variant (size, color)
+            - Settlement amount
+            - Customer-end status"""
+
+            # 1️⃣ Base queryset: Orders for given platform
+            queryset = Order.objects.select_related(
+                "product",
+                "variant",
+                "status",
+                "marketplace_order",
+                "marketplace_order__platform",
+            ).prefetch_related("settlements").filter(
+                marketplace_order__platform__code__iexact=platform_code
+            )
+
+            # 2️⃣ Dynamic filters
+            if search:
+                queryset = queryset.filter(
+                    Q(marketplace_sub_order_id__icontains=search) |
+                    Q(product__name__icontains=search) |
+                    Q(variant__sku__icontains=search) |
+                    Q(status__label__icontains=search)
+                )
+
+            if status:
+                queryset = queryset.filter(status__code=status)
+
+            if state:
+                queryset = queryset.filter(marketplace_order__state__iexact=state)
+
+            if sku:
+                queryset = queryset.filter(variant__sku__iexact=sku)
+
+            if start_date:
+                start = parse_date(start_date)
+                if start:
+                    queryset = queryset.filter(created_at__date__gte=start)
+
+            if end_date:
+                end = parse_date(end_date)
+                if end:
+                    queryset = queryset.filter(created_at__date__lte=end)
+
+            # 3️⃣ Sorting
+            if sort_by:
+                if order.lower() == 'desc':
+                    sort_by = f'-{sort_by}'
+                queryset = queryset.order_by(sort_by)
+
+            # 4️⃣ Pagination
+            total_orders = queryset.count()
+            start_index = (page - 1) * limit
+            end_index = start_index + limit
+            orders = queryset[start_index:end_index]
+
+            # 5️⃣ Prepare response
+            data = []
+            for o in orders:
+                settlement = o.settlements.order_by('-payment_date').first()
+                data.append({
+                    "order_id": o.marketplace_order.marketplace_order_id,
+                    "sub_order_id": o.marketplace_sub_order_id,
+                    "product_name": o.product.name,
+                    "sku": o.variant.sku if o.variant else None,
+                    "size": o.variant.size if o.variant else None,
+                    "color": o.variant.color if o.variant else None,
+                    "settlement_amount": float(settlement.final_settlement_amount) if settlement else 0,
+                    "status": o.status.label,
+                    "status_code": o.status.code
+                })
+
+            # 6️⃣ Return response
+            return {
+                "page": page,
+                "total_orders": total_orders,
+                "orders": data
+            }
+
+        except Exception as e:
+            print(f"Error in process_meesho_invoice: {str(e)}")
+            return {
+                "status": "error",
+                "message": "An error occurred while processing Meesho invoices",
+                "error": str(e),
+            }
+    @staticmethod
+    def update_order_status_from_csv(file, current_user):
+        content = file.read().decode("utf-8")
+        reader = csv.DictReader(StringIO(content))
+
+        updated = []
+        errors = []
+        not_found = []
+
+        with transaction.atomic():
+            for idx, row in enumerate(reader, start=1):
+                try:
+                    sub_order_id = row.get("Sub Order No")
+                    raw_status = row.get("Reason for Credit Entry")
+
+                    if not sub_order_id or not raw_status:
+                        errors.append({
+                            "row": idx,
+                            "reason": "Missing Sub Order No or Status"
+                        })
+                        continue
+
+                    # Map status
+                    status_code = STATUS_MAPPING.get(
+                        raw_status.strip(), raw_status.strip()
+                    )
+
+                    status_label = status_code.replace("_", " ").title()
+
+                    # Get/Create status
+                    status_obj, _ = OrderStatus.objects.get_or_create(
+                        code=status_code,
+                        defaults={
+                            "label": status_label,
+                            "created_by": current_user,
+                            "updated_by": current_user
+                        }
+                    )
+
+                    # Find order
+                    order = Order.objects.filter(
+                        marketplace_sub_order_id=sub_order_id
+                    ).first()
+
+                    if not order:
+                        not_found.append({
+                            "sub_order_id": sub_order_id,
+                            "reason": "Order not found"
+                        })
+                        continue
+
+                    # Update status
+                    order.status = status_obj
+                    order.updated_by = current_user
+                    order.save()
+
+                    updated.append({
+                        "sub_order_id": sub_order_id,
+                        "status": status_code
+                    })
+
+                except Exception as e:
+                    errors.append({
+                        "row": idx,
+                        "sub_order_id": row.get("Sub Order No"),
+                        "reason": str(e)
+                    })
+
+        return {
+            "summary": {
+                "total": len(updated) + len(errors) + len(not_found),
+                "updated": len(updated),
+                "errors": len(errors),
+                "not_found": len(not_found)
+            },
+            "updated_orders": updated,
+            "errors": errors,
+            "not_found": not_found
         }

@@ -5,7 +5,7 @@ from customers.models import Customer
 from marketplace.models import MarketplaceOrder
 from orders_status.models import OrderStatus
 from platforms.models import Platform
-from products.models import Product
+from products.models import Product, ProductVariant
 # F:\project\ecomm-profit\backend\customers\models.py
 # from products.models import Cu
 
@@ -21,11 +21,12 @@ class Order(BaseModel):
     marketplace_sub_order_id = models.CharField(max_length=120)
 
     product = models.ForeignKey(Product, on_delete=models.PROTECT)
-
+    variant = models.ForeignKey(ProductVariant,on_delete=models.PROTECT,null=False,blank=False,related_name="orders")
     quantity = models.IntegerField(default=1)
     selling_price = models.FloatField()
 
     status = models.ForeignKey(OrderStatus, on_delete=models.PROTECT)
+    status_updated_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "orders"
@@ -34,4 +35,5 @@ class Order(BaseModel):
         )
         indexes = [
             models.Index(fields=["marketplace_sub_order_id"]),
+            models.Index(fields=["status"]),
         ]

@@ -1,3 +1,6 @@
+from datetime import date
+from typing import Optional
+
 from fastapi import APIRouter, UploadFile, File, Query, HTTPException,Depends
 import shutil
 import os
@@ -58,4 +61,59 @@ async def upload_invoice(
             "message": "Invoice processed with errors",
             "error": str(e),
             "data": None
+        }
+        
+@router.get("/dispatch-invoice")
+def get_dispatch_data(
+    platform_code: str = Query(...),
+    page: int = Query(1),
+    limit: int = Query(10),
+
+    search: Optional[str] = None,
+    status: Optional[str] = None,
+    state: Optional[str] = None,
+    sku: Optional[str] = None,
+
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+
+    sort_by: Optional[str] = "id",
+    order: Optional[str] = "desc"
+):
+    
+    if platform_code.lower() == "meesho":
+        return InvoiceExtractController.process_meesho_invoice(platform_code,page,limit,search,status,state,sku,start_date,end_date,sort_by,order)
+    elif platform_code.lower() == "amazon":
+        return {
+            "message": "Amazon invoice processing not implemented yet",
+            "status": "error"
+        }
+        return InvoiceExtractController.process_amazon_invoice()
+    else:
+        raise ValueError("Unsupported platform code")
+    
+@router.post("/order-status")
+def upload_order_status(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user)
+):
+    if not file.filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only CSV allowed")
+
+    try:
+        result = InvoiceExtractController.update_order_status_from_csv(
+            file.file, current_user
+        )
+
+        return {
+            "status": "success",
+            "message": "Order status updated successfully",
+            "data": result
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": "CSV processing failed",
+            "error": str(e)
         }

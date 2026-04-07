@@ -48,7 +48,7 @@ class SettlementUploadController:
             df.columns = df.columns.astype(str).str.strip().str.replace("\n", " ")
 
             # DEBUG: print detected columns
-            print("Detected columns:", df.columns.tolist())
+            # print("Detected columns:", df.columns.tolist())
 
             # Detect platform-specific columns
             column_mapping = platform.detect_columns(df.columns)
@@ -69,7 +69,7 @@ class SettlementUploadController:
                 o.marketplace_sub_order_id: o
                 for o in Order.objects.filter(marketplace_sub_order_id__in=sub_orders)
             }
-
+            print(df[column_mapping["sub_order_id"]].value_counts().head(10))
             # Existing settlements for update
             existing = {
                 s.order_id: s
