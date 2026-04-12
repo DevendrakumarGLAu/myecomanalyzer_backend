@@ -9,30 +9,28 @@ class Migration(migrations.Migration):
     initial = True
 
     dependencies = [
-        ('biodata_templates', '0001_initial'),
         ('marriage_user_auth', '0001_initial'),
     ]
 
     operations = [
         migrations.CreateModel(
-            name='Biodata',
+            name='Template',
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('is_active', models.BooleanField(default=True)),
                 ('deleted_at', models.DateTimeField(blank=True, null=True)),
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
-                ('data', models.JSONField()),
-                ('photo', models.ImageField(blank=True, null=True, upload_to='biodata/photos/')),
+                ('name', models.CharField(max_length=100, unique=True)),
+                ('display_name', models.CharField(max_length=150)),
+                ('description', models.TextField(blank=True, null=True)),
+                ('thumbnail', models.ImageField(blank=True, null=True, upload_to='templates/thumbnails/')),
+                ('is_active', models.BooleanField(default=True)),
                 ('created_by', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='%(class)s_created', to='marriage_user_auth.marriageuser')),
                 ('deleted_by', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='%(class)s_deleted', to='marriage_user_auth.marriageuser')),
-                ('template', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, to='biodata_templates.template')),
                 ('updated_by', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='%(class)s_updated', to='marriage_user_auth.marriageuser')),
-                ('user', models.ForeignKey(db_column='marriage_user_id', on_delete=django.db.models.deletion.CASCADE, to='marriage_user_auth.marriageuser')),
             ],
             options={
-                'db_table': 'biodata',
-                'unique_together': {('user', 'template')},
+                'db_table': 'templates',
             },
         ),
     ]

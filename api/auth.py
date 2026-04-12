@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 from jose import JWTError, jwt
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 from django.db import connection
 from django.contrib.auth.models import User
 SECRET_KEY = "devendrakumarglau"
@@ -19,7 +19,25 @@ def test_auth():
         with connection.cursor() as cursor:
             cursor.execute("SELECT 1")
             result = cursor.fetchone()
-        return {"message": "MySQL connection successful ✅", "result": result}
+        engine = connection.settings_dict.get("ENGINE")
+        engine = connection.settings_dict.get("ENGINE")
+        host = connection.settings_dict.get("HOST")
+        if "mysql" in engine:
+            db_name = "MySQL (Local)"
+        elif "postgresql" in engine:
+            if "supabase" in host:
+                db_name = "PostgreSQL (Supabase)"
+            elif "render" in host:
+                db_name = "PostgreSQL (Render)"
+            else:
+                db_name = "PostgreSQL (Other)"
+        else:
+            db_name = "Unknown Database"
+        return Response({
+            "message": f"{db_name} connected successfully ✅",
+            "host": host,
+            "result": result
+        })
     except Exception as e:
         return {"error": str(e)}
     

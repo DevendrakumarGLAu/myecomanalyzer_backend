@@ -20,6 +20,8 @@ app = FastAPI(title="MyEcomAnalyzer API")
 origins = [
     "http://localhost:4200",
     "http://127.0.0.1:4200",
+    "https://marriage-biodata-lufw.onrender.com",
+    "https://myecomanalyzer-frontend.onrender.com"
 ]
 app.add_middleware(
     CORSMiddleware,

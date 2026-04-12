@@ -14,8 +14,13 @@ from pathlib import Path
 from decouple import config
 import os
 
+from dotenv import load_dotenv
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+env_path = BASE_DIR / ".env"
+if env_path.exists():
+    load_dotenv(env_path)
 
 
 # Quick-start development settings - unsuitable for production
@@ -58,6 +63,8 @@ INSTALLED_APPS = [
     'payments',
     'marriage_user_auth',
     'marriage_biodata',
+    'biodata_templates',
+    
 ]
 
 MIDDLEWARE = [
@@ -128,11 +135,12 @@ WSGI_APPLICATION = 'core.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.environ.get('DB_NAME', 'fallback_name'),
-        'USER': os.environ.get('DB_USER', 'fallback_user'),
-        'PASSWORD': os.environ.get('DB_PASSWORD', ''),
-        'HOST': os.environ.get('DB_HOST', 'localhost'),
-        'PORT': os.environ.get('DB_PORT', '5432'),
+        'NAME': os.environ.get('DB_NAME'),
+        'USER': os.environ.get('DB_USER'),
+        'PASSWORD': os.environ.get('DB_PASSWORD'),
+        'HOST': os.environ.get('DB_HOST'),
+        'PORT': os.getenv('DB_PORT')
+       
     }
 }
 
