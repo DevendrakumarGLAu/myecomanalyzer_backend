@@ -31,6 +31,6 @@ app.add_middleware(
     allow_headers=["*"],        # allow all headers
 )
 # 4️⃣ Include router
-router = APIRouter(prefix="/api/v1")
-app.include_router(api_v1_router, prefix="/api/v1")
+router = APIRouter()
+app.include_router(api_v1_router)
 # uvicorn main:app --reload
