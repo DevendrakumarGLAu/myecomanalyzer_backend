@@ -69,18 +69,26 @@ class CategoryController:
     @staticmethod
     def update_category(category_id, payload, current_user):
         try:
-            category = Category.objects.filter(id=category_id, is_active=True).first()
+            category = Category.objects.filter(
+                id=category_id,
+                is_active=True
+            ).first()
 
             if not category:
                 return {
                     "success": False,
-                    "message": "Category not found"
+                    "message": "Category not found",
+                    "data": None
                 }
 
-            if Category.objects.filter(name__iexact=payload.name.strip()).exclude(id=category_id).exists():
+            # Check duplicate (excluding current)
+            if Category.objects.filter(
+                name__iexact=payload.name.strip()
+            ).exclude(id=category_id).exists():
                 return {
                     "success": False,
-                    "message": "Category with this name already exists"
+                    "message": "Category with this name already exists",
+                    "data": None
                 }
 
             category.name = payload.name.strip()
@@ -90,13 +98,14 @@ class CategoryController:
             return {
                 "success": True,
                 "message": "Category updated successfully",
-                "data": category
+                "data": CategoryResponse.from_orm(category)
             }
 
         except Exception as e:
             return {
                 "success": False,
                 "message": "Error updating category",
+                "data": None,
                 "details": str(e)
             }
 

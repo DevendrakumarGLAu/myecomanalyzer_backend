@@ -70,3 +70,8 @@ class ProductUpdateRequest(BaseModel):
     rto_cost: Optional[float] = None
     is_active: Optional[bool] = None
     variants: Optional[List[ProductVariantRequest]] = None
+    
+class APIResponse(BaseModel):
+    status: bool
+    message: str
+    data: Optional[ProductResponse] = None

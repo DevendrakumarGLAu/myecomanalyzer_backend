@@ -22,3 +22,8 @@ class PaginatedCategoryResponse(BaseModel):
     page: int
     limit: int
     data: List[CategoryResponse]
+    
+class CategoryCreateResponse(BaseModel):
+    success: bool
+    message: str
+    data: Optional[CategoryResponse] = None

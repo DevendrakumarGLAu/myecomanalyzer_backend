@@ -3,6 +3,7 @@ from django.contrib.auth.models import User
 from typing import Optional, List
 from api.auth import get_current_user
 from api.schemas.category_schema import (
+    CategoryCreateResponse,
     CategoryRequest,
     CategoryResponse,
     PaginatedCategoryResponse,
@@ -28,7 +29,7 @@ def get_all_categories(
 
     return result
 
-@router.post("/add", response_model=CategoryResponse)
+@router.post("/add", response_model=CategoryCreateResponse)
 def add_category(
     payload: CategoryRequest,
     current_user: User = Depends(get_current_user)
@@ -40,7 +41,7 @@ def add_category(
 
     return result
 
-@router.put("/update", response_model=CategoryResponse)
+@router.put("/update", response_model=CategoryCreateResponse)
 def update_category(
     payload: UpdateCategoryRequest,
     category_id: int = Query(..., description="ID of the category to update"),
