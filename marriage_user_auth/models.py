@@ -4,7 +4,7 @@ class MarriageUser(models.Model):
     firstName = models.CharField(max_length=100)
     middleName = models.CharField(max_length=100, null=True, blank=True)
     lastName = models.CharField(max_length=100)
-
+    name = models.CharField(max_length=255, null=True, blank=True)
     mobile = models.CharField(max_length=15, unique=True)
     email = models.EmailField(unique=True)
     password = models.CharField(max_length=255)
