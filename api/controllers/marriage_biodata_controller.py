@@ -6,6 +6,7 @@ from fastapi import HTTPException
 
 from marriage_biodata.models import Biodata
 from marriage_user_auth.models import MarriageUser
+from biodata_templates.models import Template
 
 env = Environment(loader=FileSystemLoader("templates"))
 
@@ -16,12 +17,17 @@ class MarriageBiodataController:
     def save_biodata(payload):
         try:
             user = MarriageUser.objects.get(id=payload.user_id)
-        except user.DoesNotExist:
+        except MarriageUser.DoesNotExist:
             raise HTTPException(status_code=404, detail="MarriageUser not found")
 
+        try:
+            template = Template.objects.get(name=payload.template_id)
+        except Template.DoesNotExist:
+            raise HTTPException(status_code=404, detail="Template not found")
+
         biodata = Biodata.objects.create(
-            MarriageUser=MarriageUser,
-            template_id=payload.template_id,
+            user=user,
+            template=template,
             data=payload.data
         )
 

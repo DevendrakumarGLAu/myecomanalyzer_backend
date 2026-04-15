@@ -2,6 +2,7 @@ from django.db import models
 
 from api.base import BaseModel
 from customers.models import Customer
+from logistics.models import DeliveryPartner
 from marketplace.models import MarketplaceOrder
 from orders_status.models import OrderStatus
 from platforms.models import Platform
@@ -27,6 +28,11 @@ class Order(BaseModel):
 
     status = models.ForeignKey(OrderStatus, on_delete=models.PROTECT)
     status_updated_at = models.DateTimeField(null=True, blank=True)
+    
+    delivery_partner = models.ForeignKey(DeliveryPartner, on_delete=models.SET_NULL, null=True,blank=True,
+        related_name="orders")
+    payment_type = models.CharField( max_length=20, choices=[("COD", "COD"), ("PREPAID", "PREPAID")],default="PREPAID")
+
 
     class Meta:
         db_table = "orders"

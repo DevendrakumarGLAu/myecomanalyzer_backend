@@ -25,7 +25,9 @@ def login(credentials: LoginRequest):
     """
     # Lookup username from UserProfile by email
     try:
-        profile = UserProfile.objects.get(email=credentials.email)
+        profile = UserProfile.objects.filter(email__iexact=credentials.email).first()
+        if not profile:
+            raise HTTPException(status_code=401, detail="Invalid email or password")
         username = profile.user.username
     except UserProfile.DoesNotExist:
         raise HTTPException(status_code=401, detail="Invalid email or password")

@@ -3,6 +3,7 @@ import re
 from datetime import datetime
 
 from customers.models import Customer
+from logistics.models import DeliveryPartner
 from platforms.models import Platform
 from marketplace.models import MarketplaceOrder
 from orders.models import Order, OrderStatus
@@ -52,9 +53,19 @@ class InvoiceExtractController:
         amount_match = re.search(r'Total\s+Rs\.0\.00\s+Rs\.(\d+\.\d+)', text)
         selling_price = float(amount_match.group(1)) if amount_match else 0.0
 
-        name_match = re.search(r'BILL TO / SHIP TO\s*(.*?)\s*-', text)
-        customer_name = name_match.group(1).strip() if name_match else "Unknown"
-
+        # name_match = re.search(r'BILL TO / SHIP TO\s*(.*?)\s*-', text)
+        # customer_name = name_match.group(1).strip() if name_match else "Unknown"
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        customer_name = "Unknown"
+        for i, line in enumerate(lines):
+            if "BILL TO / SHIP TO" in line:
+                if i + 1 < len(lines):
+                    next_line = lines[i + 1]
+                    if "-" in next_line:
+                        customer_name = next_line.split("-")[0].strip()
+                    else:
+                        customer_name = next_line.strip()
+                break
         pincode_match = re.search(r'(\d{6})', text)
         pincode = pincode_match.group(1) if pincode_match else "000000"
 
@@ -105,7 +116,7 @@ class InvoiceExtractController:
     
     @staticmethod
     def extract_order_date_from_text(text, marketplace_sub_order_id):
-        # print(text)
+        print(text)
         if not isinstance(text, str):
             raise ValueError(
                 f"Order Date text invalid for order {marketplace_sub_order_id}"
@@ -171,7 +182,11 @@ class InvoiceExtractController:
                     sku, size, quantity, color = InvoiceExtractController.extract_product_from_text(
                             text, data["marketplace_sub_order_id"]
                         )
+                    delivery_partner_name = InvoiceExtractController.extract_delivery_partner(text)
+                    payment_type = InvoiceExtractController.extract_payment_type(text)
 
+                    data["delivery_partner"] = delivery_partner_name
+                    data["payment_type"] = payment_type
                     data["sku"] = sku
                     data["size"] = size
                     data["color"] = color
@@ -183,7 +198,12 @@ class InvoiceExtractController:
                     except Exception:
                         order_date = datetime.today().date()
                         
-                    
+                    delivery_partner_obj = None
+                    if delivery_partner_name:
+                        delivery_partner_obj, _ = DeliveryPartner.objects.get_or_create(
+                            name=delivery_partner_name,
+                            defaults={"code": delivery_partner_name.upper().replace(" ", "_")}
+                        )
 
                     # 🔁 DUPLICATE CHECK
                     if Order.objects.filter(
@@ -199,9 +219,9 @@ class InvoiceExtractController:
                     # variant = ProductVariant.objects.select_related("product").get(sku=data["sku"])
                     try:
                         variant = ProductVariant.objects.select_related("product").filter(
-                            sku=data["sku"],
-                            size=data.get("size"),
-                            color=data.get("color")
+                            sku__iexact=sku,
+    size=size,
+    color__iexact=color
                         ).first()
                         
                         if not variant:   # ✅ ADD THIS CHECK
@@ -256,6 +276,8 @@ class InvoiceExtractController:
                         quantity=data["quantity"],
                         selling_price=data["selling_price"],
                         status=status,
+                        delivery_partner=delivery_partner_obj,
+                        payment_type=data.get("payment_type", "COD"),
                         created_by=current_user,
                         updated_by=current_user
                     )
@@ -485,3 +507,40 @@ class InvoiceExtractController:
             "errors": errors,
             "not_found": not_found
         }
+    @staticmethod
+    def extract_delivery_partner(text):
+        if not text:
+            return None
+
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+
+        known_partners = [
+            "Shadowfax",
+            "Xpressbees",
+            "Delhivery",
+            "Ecom Express",
+            "Ekart",
+            "Blue Dart",
+            "Meesho"
+        ]
+
+        for line in lines:
+            for partner in known_partners:
+                if partner.lower() in line.lower():
+                    return partner
+
+        return None
+    
+    @staticmethod
+    def extract_payment_type(text):
+        if not text:
+            return "PREPAID"
+
+        text_upper = text.upper()
+
+        if "COD" in text_upper:
+            return "COD"
+        if "PREPAID" in text_upper:
+            return "PREPAID"
+
+        return "PREPAID"

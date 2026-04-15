@@ -61,6 +61,7 @@ INSTALLED_APPS = [
     'orders_status',
     'marketplace',
     'payments',
+    'logistics',
     'marriage_user_auth',
     'marriage_biodata',
     'biodata_templates',

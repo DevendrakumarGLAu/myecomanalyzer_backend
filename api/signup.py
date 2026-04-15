@@ -15,9 +15,10 @@ def signup(user: SignupRequest):
     Handles free trial or paid subscription.
     """
     # Validate username/email
+    email = user.email.strip().lower()
     if User.objects.filter(username=user.username).exists():
         raise HTTPException(status_code=400, detail="Username already exists")
-    if User.objects.filter(email=user.email).exists():
+    if User.objects.filter(email__iexact=email).exists():
         raise HTTPException(status_code=400, detail="Email already exists")
     
     # Validate passwords
