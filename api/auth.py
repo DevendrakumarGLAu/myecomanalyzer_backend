@@ -56,13 +56,11 @@ def verify_token(token: str):
     except JWTError:
         return None
 
-from fastapi.security import APIKeyHeader
-from fastapi import Depends, HTTPException
+from fastapi import  HTTPException
 
 # Name of header: Authorization
 from fastapi import Header, HTTPException
 
-api_key_header = APIKeyHeader(name="accesstoken")
 def get_current_user(access_token: str = Header(..., description="Enter JWT token as 'Bearer <token>'")):
     """
     Read JWT token from header per endpoint

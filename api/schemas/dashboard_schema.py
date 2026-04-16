@@ -26,8 +26,19 @@ class SalesTrend(BaseModel):
     total_orders: int
 
 
+class DeliveryPartnerStat(BaseModel):
+    partner: str
+    total_orders: int
+    delivered: int
+    rto: int
+    cancelled: int
+    customer_return: int
+    ready_to_ship: int
+
+
 class DashboardResponse(BaseModel):
     summary: DashboardSummary
     orders_by_status: List[StatusData]
     orders_by_platform: List[PlatformData]
     sales_trend: List[SalesTrend]
+    delivery_partner_stats: List[DeliveryPartnerStat]

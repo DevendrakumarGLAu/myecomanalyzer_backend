@@ -7,6 +7,7 @@ from products.models import Product, ProductVariant
 from payments.models import OrderSettlement
 from marketplace.models import MarketplaceOrder
 from platforms.models import Platform
+from django.db.models import Count, Q
 
 class DashboardController:
 
@@ -36,7 +37,8 @@ class DashboardController:
                         },
                         "orders_by_status": [],
                         "orders_by_platform": [],
-                        "sales_trend": []
+                        "sales_trend": [],
+                        "delivery_partner_stats": []
                     }
 
             # Filter orders for logged-in user
@@ -103,6 +105,18 @@ class DashboardController:
                 .annotate(total_orders=Count("sub_orders"))
                 .order_by("order_date")
             )
+            delivery_partner_stats = list(
+                    Order.objects.filter(**order_filter)
+                    .values("delivery_partner__name")
+                    .annotate(
+                        total_orders=Count("id"),
+                        delivered=Count("id", filter=Q(status__code="DELIVERED")),
+                        rto=Count("id", filter=Q(status__code="RTO_COMPLETE")),
+                        cancelled=Count("id", filter=Q(status__code="CANCELLED")),
+                        customer_return=Count("id", filter=Q(status__code="DOOR_STEP_EXCHANGED")),
+                        ready_to_ship=Count("id", filter=Q(status__code="READY_TO_SHIP")),
+                    )
+                )
 
             return {
                 "summary": {
@@ -124,13 +138,34 @@ class DashboardController:
                 "sales_trend": [
                     {"date": str(x["order_date"]), "total_orders": x["total_orders"]}
                     for x in sales_trend
+                ],
+                "delivery_partner_stats": [
+                    {
+                        "partner": x.get("delivery_partner__name") or "Unknown",
+                        "total_orders": x["total_orders"],
+                        "delivered": x["delivered"],
+                        "rto": x["rto"],
+                        "cancelled": x["cancelled"],
+                        "customer_return": x["customer_return"],
+                        "ready_to_ship": x["ready_to_ship"],
+                    }
+                    for x in delivery_partner_stats
                 ]
             }
         except Exception as e:
-            # Log the error (you can use logging framework here)
             print(f"Error in DashboardController.get_dashboard: {str(e)}")
+
             return {
-                "status": "error",
-                "message": "An error occurred while fetching dashboard data",
-                "details": str(e)
+                "summary": {
+                    "total_orders": 0,
+                    "total_products": 0,
+                    "total_sales": 0,
+                    "total_returns": 0,
+                    "total_settlement": 0,
+                    "low_stock_products": 0
+                },
+                "orders_by_status": [],
+                "orders_by_platform": [],
+                "sales_trend": [],
+                "delivery_partner_stats": []
             }
