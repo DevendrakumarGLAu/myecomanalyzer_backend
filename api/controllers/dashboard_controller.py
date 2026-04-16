@@ -14,6 +14,8 @@ class DashboardController:
     @staticmethod
     def get_dashboard(platform_code: str = None, current_user=None):
         try:
+            # import pdb
+            # pdb.set_trace()
             # Make sure current_user is required
             if current_user is None:
                 raise ValueError("current_user must be provided")
@@ -22,7 +24,7 @@ class DashboardController:
             platform_id = None
             if platform_code:
                 try:
-                    platform = Platform.objects.get(code=platform_code)
+                    platform = Platform.objects.get(code__iexact=platform_code)
                     platform_id = platform.id
                 except Platform.DoesNotExist:
                     # Platform not found, return empty dashboard
