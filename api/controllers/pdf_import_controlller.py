@@ -337,7 +337,7 @@ class InvoiceExtractController:
             "error_file": error_file_url
         }
         
-    def process_meesho_invoice(platform_code,page,limit,search,status,state,sku,start_date,end_date,sort_by,order):
+    def process_meesho_invoice(current_user,platform_code,page,limit,search,status,state,sku,start_date,end_date,sort_by,order):
         try:
             """
             Get order dispatch data with:
@@ -346,17 +346,19 @@ class InvoiceExtractController:
             - Variant (size, color)
             - Settlement amount
             - Customer-end status"""
-
+            # import pdb
+            # pdb.set_trace()
             # 1️⃣ Base queryset: Orders for given platform
             queryset = Order.objects.select_related(
-                "product",
-                "variant",
-                "status",
-                "marketplace_order",
-                "marketplace_order__platform",
-            ).prefetch_related("settlements").filter(
-                marketplace_order__platform__code__iexact=platform_code
-            )
+                    "product",
+                    "variant",
+                    "status",
+                    "marketplace_order",
+                    "marketplace_order__platform",
+                ).prefetch_related("settlements").filter(
+                    marketplace_order__platform__code__iexact=platform_code,
+                    created_by=current_user   # 👈 KEY FILTER
+                )
 
             # 2️⃣ Dynamic filters
             if search:
@@ -411,7 +413,8 @@ class InvoiceExtractController:
                     "color": o.variant.color if o.variant else None,
                     "settlement_amount": float(settlement.final_settlement_amount) if settlement else 0,
                     "status": o.status.label,
-                    "status_code": o.status.code
+                    "status_code": o.status.code,
+                    "order_date": o.marketplace_order.order_date if o.marketplace_order else None
                 })
 
             # 6️⃣ Return response

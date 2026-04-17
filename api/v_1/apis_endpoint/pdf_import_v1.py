@@ -78,11 +78,12 @@ def get_dispatch_data(
     end_date: Optional[date] = None,
 
     sort_by: Optional[str] = "id",
-    order: Optional[str] = "desc"
+    order: Optional[str] = "desc",
+    current_user: User = Depends(get_current_user)
 ):
     
     if platform_code.lower() == "meesho":
-        return InvoiceExtractController.process_meesho_invoice(platform_code,page,limit,search,status,state,sku,start_date,end_date,sort_by,order)
+        return InvoiceExtractController.process_meesho_invoice(current_user,platform_code,page,limit,search,status,state,sku,start_date,end_date,sort_by,order)
     elif platform_code.lower() == "amazon":
         return {
             "message": "Amazon invoice processing not implemented yet",
