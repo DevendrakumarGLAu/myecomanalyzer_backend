@@ -210,21 +210,54 @@ class ProductController:
             # --- Update Variants if provided ---
             if "variants" in update_data:
                 # Delete old variants
-                product.variants.all().delete()
+                # product.variants.all().delete()
+                
+                existing_variants = {v.id: v for v in product.variants.all()}
+                incoming_variants = payload.variants or []
+                incoming_ids = []
+                for variant_data in incoming_variants:
+                    variant_id = variant_data.id
+
+                    if variant_id and variant_id in existing_variants:
+                        # Update existing variant
+                        variant = existing_variants[variant_id]
+                        variant.sku = variant_data.sku
+                        variant.size = variant_data.size
+                        variant.color = variant_data.color
+                        variant.cost_price = variant_data.cost_price
+                        variant.selling_price = variant_data.selling_price
+                        variant.stock = variant_data.stock
+                        variant.shipping_cost = variant_data.shipping_cost or 0.0
+                        variant.rto_cost = variant_data.rto_cost or 0.0
+                        variant.save()
+                        incoming_ids.append(variant_id)
+                    else:
+                        # Create new variant
+                        new_variant = ProductVariant.objects.create(
+                            product=product,
+                            sku=variant_data.sku,
+                            size=variant_data.size,
+                            color=variant_data.color,
+                            cost_price=variant_data.cost_price,
+                            selling_price=variant_data.selling_price,
+                            stock=variant_data.stock,
+                            shipping_cost=variant_data.shipping_cost or 0.0,
+                            rto_cost=variant_data.rto_cost or 0.0
+                        )
 
                 # Create new variants
-                for variant in update_data["variants"]:
-                    ProductVariant.objects.create(
-                            product=product,
-                            sku=variant["sku"],
-                            size=variant.get("size"),
-                            color=variant.get("color"),
-                            cost_price=variant["cost_price"],
-                            selling_price=variant["selling_price"],
-                            stock=variant["stock"],
-                            shipping_cost=variant.get("shipping_cost", 0.0),
-                            rto_cost=variant.get("rto_cost", 0.0)
-                        )
+                # for variant in update_data["variants"]:
+                #     ProductVariant.objects.create(
+                #             product=product,
+                #             sku=variant["sku"],
+                #             size=variant.get("size"),
+                #             color=variant.get("color"),
+                #             cost_price=variant["cost_price"],
+                #             selling_price=variant["selling_price"],
+                #             stock=variant["stock"],
+                #             shipping_cost=variant.get("shipping_cost", 0.0),
+                #             rto_cost=variant.get("rto_cost", 0.0)
+                #         )
 
             # Prefetch variants for response
             product = Product.objects.prefetch_related("variants").get(id=product.id)
