@@ -16,7 +16,8 @@ import csv
 from datetime import datetime
 from django.db import transaction
 from orders.models import OrderStatus
-
+from functools import lru_cache
+from logistics.models import DeliveryPartner
 # Optional: mapping CSV status values to internal codes
 STATUS_MAPPING = {
     "DELIVERED": "DELIVERED",
@@ -34,7 +35,9 @@ STATUS_MAPPING = {
 }
 class InvoiceExtractController:
     
-
+    @lru_cache(maxsize=1)
+    def get_partners():
+        return list(DeliveryPartner.objects.values_list("name", flat=True))
    # --------------------------------------------------
     # 2. PARSE PAGE TEXT
     # --------------------------------------------------
@@ -116,7 +119,7 @@ class InvoiceExtractController:
     
     @staticmethod
     def extract_order_date_from_text(text, marketplace_sub_order_id):
-        print(text)
+        # print(text)
         if not isinstance(text, str):
             raise ValueError(
                 f"Order Date text invalid for order {marketplace_sub_order_id}"
@@ -515,22 +518,21 @@ class InvoiceExtractController:
         if not text:
             return None
 
-        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        partners = InvoiceExtractController.get_partners()  # DB / cached list
 
-        known_partners = [
-            "Shadowfax",
-            "Xpressbees",
-            "Delhivery",
-            "Ecom Express",
-            "Ekart",
-            "Blue Dart",
-            "Meesho"
-        ]
+        # normalize full text once
+        clean_text = re.sub(r"\s+", " ", text).lower()
 
-        for line in lines:
-            for partner in known_partners:
-                if partner.lower() in line.lower():
-                    return partner
+        for partner in partners:
+            if not partner:
+                continue
+
+            # normalize partner name
+            clean_partner = re.sub(r"\s+", " ", partner).strip().lower()
+
+            # safe match
+            if clean_partner in clean_text:
+                return partner
 
         return None
     

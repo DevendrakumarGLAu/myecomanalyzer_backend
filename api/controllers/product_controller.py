@@ -245,20 +245,6 @@ class ProductController:
                             rto_cost=variant_data.rto_cost or 0.0
                         )
 
-                # Create new variants
-                # for variant in update_data["variants"]:
-                #     ProductVariant.objects.create(
-                #             product=product,
-                #             sku=variant["sku"],
-                #             size=variant.get("size"),
-                #             color=variant.get("color"),
-                #             cost_price=variant["cost_price"],
-                #             selling_price=variant["selling_price"],
-                #             stock=variant["stock"],
-                #             shipping_cost=variant.get("shipping_cost", 0.0),
-                #             rto_cost=variant.get("rto_cost", 0.0)
-                #         )
-
             # Prefetch variants for response
             product = Product.objects.prefetch_related("variants").get(id=product.id)
             sku = product.variants.first().sku if product.variants.exists() else None
