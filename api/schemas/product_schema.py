@@ -3,6 +3,7 @@ from typing import List, Optional
 
 
 class ProductVariantRequest(BaseModel):
+    id: Optional[int] = None 
     sku: str
     size: Optional[str] = None
     color: Optional[str] = None

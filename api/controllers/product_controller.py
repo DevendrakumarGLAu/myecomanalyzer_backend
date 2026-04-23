@@ -233,7 +233,7 @@ class ProductController:
                         incoming_ids.append(variant_id)
                     else:
                         # Create new variant
-                        new_variant = ProductVariant.objects.create(
+                        new_variant = ProductVariant.objects.update_or_create(
                             product=product,
                             sku=variant_data.sku,
                             size=variant_data.size,
