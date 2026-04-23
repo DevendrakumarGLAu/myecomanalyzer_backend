@@ -1,3 +1,5 @@
+from typing import Optional
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from django.contrib.auth import authenticate
@@ -11,12 +13,16 @@ class LoginRequest(BaseModel):
     password: str
 
 class TokenResponse(BaseModel):
+    first_name: Optional[str]
+    last_name: Optional[str]
+    username: Optional[str]
     access_token: str
     token_type: str = "bearer"
     user_id: int
     trial_end: str | None = None
     subscription_end: str | None = None
     payment_verified: bool
+    created_at: str
 
 @router.post("/login", response_model=TokenResponse)
 def login(credentials: LoginRequest):
@@ -48,6 +54,10 @@ def login(credentials: LoginRequest):
     return TokenResponse(
         access_token=token,
         user_id=profile.user.id,
+        username=profile.user.username,
+        first_name=profile.first_name,
+        last_name=profile.last_name,
+        created_at=profile.created_at.isoformat(),
         trial_end=profile.trial_end.strftime("%Y-%m-%d %H:%M:%S") if profile.trial_end else None,
         subscription_end=profile.subscription_end.strftime("%Y-%m-%d %H:%M:%S") if profile.subscription_end else None,
         payment_verified=profile.payment_verified
