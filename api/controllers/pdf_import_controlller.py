@@ -74,7 +74,7 @@ class InvoiceExtractController:
 
         state_match = re.search(r',\s*([A-Za-z\s]+),\s*\d{6}', text)
         state = state_match.group(1).strip() if state_match else "Unknown"
-
+        address = InvoiceExtractController.extract_customer_address(text)
         return {
             "marketplace_order_id": marketplace_order_id,
             "marketplace_sub_order_id": marketplace_sub_order_id,
@@ -82,7 +82,7 @@ class InvoiceExtractController:
             "customer_name": customer_name,
             "state": state,
             "pincode": pincode,
-            "address": text
+            "address": address
         }
     
     @staticmethod
@@ -547,5 +547,137 @@ class InvoiceExtractController:
             return "COD"
         if "PREPAID" in text_upper:
             return "PREPAID"
+        if "EXCHANGE" in text_upper:
+            return "EXCHANGE"
+        return "COD"
+    
+    @staticmethod
+    def extract_customer_address(text):
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
 
-        return "PREPAID"
+        for line in lines:
+            if "BILL TO / SHIP TO" in line:
+                continue
+
+            # Look for line containing name + address
+            if "-" in line:
+                parts = line.split("-", 1)
+
+                if len(parts) < 2:
+                    continue
+
+                full_address = parts[1].strip()
+
+                # Remove pincode + state from end
+                full_address = re.sub(r',?\s*[A-Za-z\s]+,\s*\d{6}.*$', '', full_address)
+
+                # Split by comma and clean
+                address_parts = [p.strip() for p in full_address.split(",")]
+
+                # Remove very short/noisy parts
+                address_parts = [
+                    part for part in address_parts
+                    if len(part) > 3 and not re.search(r'\b\d{6}\b', part)
+                ]
+
+                return "\n".join(address_parts)
+
+        return ""
+    
+    
+    
+    @staticmethod
+    @transaction.atomic
+    def create_single_order(data, current_user):
+
+        # ✅ Validate platform
+        try:
+            platform = Platform.objects.get(code=data["platform_code"])
+        except Platform.DoesNotExist:
+            return {"success": False, "message": "Invalid platform"}
+
+        # ✅ Validate / get variant
+        variant = ProductVariant.objects.filter(
+            sku__iexact=data["sku"],
+            size=data["size"],
+            color__iexact=data["color"]
+        ).select_related("product").first()
+
+        if not variant:
+            return {
+                "success": False,
+                "message": "Variant not found (check SKU/size/color)"
+            }
+
+        product = variant.product
+
+        # ✅ Customer
+        customer, _ = Customer.objects.get_or_create(
+            name=data["customer_name"],
+            defaults={
+                "state": data.get("state", ""),
+                "pincode": data.get("pincode", ""),
+                "address": data.get("address", ""),
+                "created_by": current_user
+            }
+        )
+
+        # ✅ Marketplace Order
+        marketplace_order, _ = MarketplaceOrder.objects.get_or_create(
+            platform=platform,
+            marketplace_order_id=data["marketplace_order_id"],
+            defaults={
+                "customer": customer,
+                "order_date": data.get("order_date"),
+                "created_by": current_user
+            }
+        )
+
+        # ✅ Delivery Partner
+        delivery_partner = None
+        delivery_partner_id = None
+        if data.get("delivery_partner"):
+            delivery_partner_obj = DeliveryPartner.objects.filter(
+                code=data["delivery_partner"].upper()
+            ).first()
+
+            if delivery_partner_obj:
+                delivery_partner_id = delivery_partner_obj.id
+
+        # ✅ Status (default READY_TO_SHIP)
+        status, _ = OrderStatus.objects.get_or_create(
+            code="READY_TO_SHIP",
+            defaults={"label": "Ready To Ship"}
+        )
+
+        # ✅ Duplicate check
+        existing_order = Order.objects.filter(marketplace_sub_order_id=data["sub_order_id"]).first()
+        if existing_order:
+            return {
+                "success": True,
+                "message": "⚠️ Order already exists",
+                "order_id": existing_order.marketplace_sub_order_id,
+                "is_duplicate": True
+            }
+
+        # ✅ Create Order
+        order = Order.objects.create(
+            marketplace_order=marketplace_order,
+            marketplace_sub_order_id=data["sub_order_id"],
+            product=product,
+            variant=variant,
+            quantity=data.get("quantity", 1),
+            selling_price=data.get("selling_price", 0),
+            status=status,
+            delivery_partner_id=delivery_partner_id,
+            payment_type=data.get("payment_type", "COD"),
+            created_by=current_user,
+            updated_by=current_user
+        )
+
+        return {
+            "success": True,
+            "message": "Order created successfully",
+            "order_id": order.marketplace_sub_order_id,
+            "is_duplicate": True if existing_order else False
+        }

@@ -76,3 +76,26 @@ class APIResponse(BaseModel):
     status: bool
     message: str
     data: Optional[ProductResponse] = None
+    
+    
+class CreateSingleOrderRequest(BaseModel):
+    platform_code: str
+    marketplace_order_id: str
+    sub_order_id: str
+
+    sku: str
+    size: str
+    color: str
+
+    quantity: Optional[int] = 1
+    selling_price: Optional[float] = 0
+
+    customer_name: str
+    state: Optional[str] = ""
+    pincode: Optional[str] = ""
+    address: Optional[str] = ""
+
+    delivery_partner: Optional[str] = None
+    payment_type: Optional[str] = "PREPAID"
+
+    order_date: Optional[str] = None

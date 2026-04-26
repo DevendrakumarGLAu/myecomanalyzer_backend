@@ -23,7 +23,6 @@ class OrderSettlement(BaseModel):
     final_settlement_amount = models.FloatField(default=0)
     total_sale_amount = models.FloatField(default=0)
     total_return_amount = models.FloatField(default=0)
-    final_settlement_amount = models.FloatField(default=0)
     fixed_fee = models.FloatField(default=0)
     warehousing_fee = models.FloatField(default=0)
     return_premium = models.FloatField(default=0)
@@ -33,4 +32,7 @@ class OrderSettlement(BaseModel):
 
     class Meta:
         db_table = "order_settlements"
-        unique_together = ("order", "transaction_id")
+        indexes = [
+        models.Index(fields=["order"]),
+        models.Index(fields=["transaction_id"]),
+    ]

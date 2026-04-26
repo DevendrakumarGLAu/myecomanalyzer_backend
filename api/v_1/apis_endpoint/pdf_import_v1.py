@@ -9,6 +9,7 @@ from api.controllers.pdf_import_controlller import InvoiceExtractController
 from asgiref.sync import sync_to_async
 from django.contrib.auth.models import User
 from api.auth import get_current_user
+from api.schemas.product_schema import CreateSingleOrderRequest
 
 router = APIRouter()
 
@@ -117,4 +118,20 @@ def upload_order_status(
             "status": "error",
             "message": "CSV processing failed",
             "error": str(e)
+        }
+        
+@router.post("/dispatch-single-order")
+def create_single_order(
+    payload: CreateSingleOrderRequest,
+    current_user: User = Depends(get_current_user)
+):
+    try:
+        result = InvoiceExtractController.create_single_order(payload.dict(), current_user)
+
+        return result
+
+    except Exception as e:
+        return {
+            "success": False,
+            "message": str(e)
         }

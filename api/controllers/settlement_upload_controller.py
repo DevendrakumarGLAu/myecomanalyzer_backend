@@ -8,6 +8,7 @@ from api.excel_upload.platform_factory import SettlementPlatformFactory
 from orders.models import Order
 from payments.models import OrderSettlement
 from orders_status.models import OrderStatus
+from platforms.models import Platform
 
 
 def clean_number(value):
@@ -39,6 +40,7 @@ def derive_order_status(row, mapping):
     sale = clean_number(row.get(mapping.get("total_sale_amount")))
     ret = clean_number(row.get(mapping.get("total_return_amount")))
     final_amt = clean_number(row.get(mapping.get("final_settlement_amount")))
+    claims = clean_number(row.get(mapping.get("claims")))
 
     # ✅ RTO
     if "rto" in live_status:
@@ -46,6 +48,9 @@ def derive_order_status(row, mapping):
 
     # ✅ CUSTOMER RETURN
     if "return" in live_status or ret < 0:
+        return "CUSTOMER_RETURN"
+    # ✅ CUSTOMER RETURN for claims
+    if not live_status and claims > 0:
         return "CUSTOMER_RETURN"
 
     # ✅ DELIVERED
@@ -74,6 +79,9 @@ class SettlementUploadController:
     def upload_settlement_excel(file, current_user, platform_code):
         try:
             platform = SettlementPlatformFactory.get_platform(platform_code)
+            platform_obj = Platform.objects.filter(code=platform_code).first()
+            if not platform_obj:
+                raise HTTPException(status_code=400, detail="Invalid platform code")
 
             file.seek(0)
             file_content = file.read()
@@ -123,15 +131,15 @@ class SettlementUploadController:
                 try:
                     sub_order = normalize_sub_order(row[column_mapping["sub_order_id"]])
                     # sub_order = str(row[column_mapping["sub_order_id"]]).strip()
-                    excel_ids = set([normalize_sub_order(x) for x in df[column_mapping["sub_order_id"]]])
+                    # excel_ids = set([normalize_sub_order(x) for x in df[column_mapping["sub_order_id"]]])
 
-                    db_ids = set(orders.keys())
+                    # db_ids = set(orders.keys())
 
-                    missing_ids = excel_ids - db_ids
+                    # missing_ids = excel_ids - db_ids
 
-                    print("❌ Missing in DB:", list(missing_ids)[:10])
-                    print("✅ Found in DB:", len(db_ids))
-                    print("📊 Excel total:", len(excel_ids))
+                    # print("❌ Missing in DB:", list(missing_ids)[:10])
+                    # print("✅ Found in DB:", len(db_ids))
+                    # print("📊 Excel total:", len(excel_ids))
 
                     if not sub_order:
                         skipped += 1
@@ -167,6 +175,7 @@ class SettlementUploadController:
 
                     # ✅ DATA
                     data = {
+                        "platform": platform_obj,
                         "transaction_id": row.get(column_mapping.get("transaction_id")),
                         "payment_date": pd.to_datetime(
                             row.get(column_mapping.get("payment_date")),
