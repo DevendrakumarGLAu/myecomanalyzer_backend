@@ -9,6 +9,7 @@ class DashboardSummary(BaseModel):
     total_returns: float
     total_settlement: float
     low_stock_products: int
+    total_claims: float
 
 
 class StatusData(BaseModel):

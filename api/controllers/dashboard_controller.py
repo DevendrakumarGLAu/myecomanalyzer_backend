@@ -1,4 +1,4 @@
-from django.db.models import Sum, Count
+from django.db.models import Sum, Count, Q
 from datetime import timedelta
 from django.utils import timezone
 
@@ -7,27 +7,25 @@ from products.models import Product, ProductVariant
 from payments.models import OrderSettlement
 from marketplace.models import MarketplaceOrder
 from platforms.models import Platform
-from django.db.models import Count, Q
+
 
 class DashboardController:
 
     @staticmethod
     def get_dashboard(platform_code: str = None, current_user=None):
         try:
-            # import pdb
-            # pdb.set_trace()
-            # Make sure current_user is required
             if current_user is None:
                 raise ValueError("current_user must be provided")
 
-            # Get platform_id from platform_code
+            # ----------------------------
+            # PLATFORM FILTER
+            # ----------------------------
             platform_id = None
             if platform_code:
                 try:
                     platform = Platform.objects.get(code__iexact=platform_code)
                     platform_id = platform.id
                 except Platform.DoesNotExist:
-                    # Platform not found, return empty dashboard
                     return {
                         "summary": {
                             "total_orders": 0,
@@ -35,6 +33,7 @@ class DashboardController:
                             "total_sales": 0,
                             "total_returns": 0,
                             "total_settlement": 0,
+                            "total_claims": 0,
                             "low_stock_products": 0
                         },
                         "orders_by_status": [],
@@ -43,61 +42,106 @@ class DashboardController:
                         "delivery_partner_stats": []
                     }
 
-            # Filter orders for logged-in user
-            order_filter = {
-                "product__owner": current_user  # only user's products
-            }
+            # ----------------------------
+            # ORDER FILTER
+            # ----------------------------
+            order_filter = {"product__owner": current_user}
 
             if platform_id:
                 order_filter["marketplace_order__platform_id"] = platform_id
 
-            # Total Orders
+            # ----------------------------
+            # TOTAL ORDERS (FAST)
+            # ----------------------------
             total_orders = Order.objects.filter(**order_filter).count()
 
-            # Total Products
+            # ----------------------------
+            # TOTAL PRODUCTS
+            # ----------------------------
             product_filter = {"owner": current_user}
             if platform_id:
                 product_filter["platform_id"] = platform_id
+
             total_products = Product.objects.filter(**product_filter).count()
 
-            # Settlements
-            settlements = OrderSettlement.objects.filter(order__product__owner=current_user)
+            # ----------------------------
+            # SETTLEMENTS (OPTIMIZED - SINGLE QUERY)
+            # ----------------------------
+            settlements = OrderSettlement.objects.filter(
+                order__product__owner=current_user
+            )
+
             if platform_id:
-                settlements = settlements.filter(order__marketplace_order__platform_id=platform_id)
+                settlements = settlements.filter(
+                    order__marketplace_order__platform_id=platform_id
+                )
 
-            total_sales = settlements.aggregate(total=Sum("total_sale_amount"))["total"] or 0
-            total_returns = settlements.aggregate(total=Sum("total_return_amount"))["total"] or 0
-            total_settlement = settlements.aggregate(total=Sum("final_settlement_amount"))["total"] or 0
+            totals = settlements.aggregate(
+                total_sales=Sum("total_sale_amount"),
 
-            # Low stock products
+                total_returns=Sum(
+                    "final_settlement_amount",
+                    filter=Q(final_settlement_amount__lt=0)
+                ),
+
+                total_settlement=Sum(
+                    "final_settlement_amount",
+                    filter=Q(final_settlement_amount__gt=0)
+                ),
+
+                total_claims=Sum("claim_amount"),
+            )
+
+            total_sales = totals["total_sales"] or 0
+            total_returns = totals["total_returns"] or 0
+            total_settlement = totals["total_settlement"] or 0
+            total_claims = totals["total_claims"] or 0
+
+            # ----------------------------
+            # LOW STOCK PRODUCTS
+            # ----------------------------
             low_stock_products = ProductVariant.objects.filter(
                 product__owner=current_user,
                 stock__lt=10
             )
+
             if platform_id:
-                low_stock_products = low_stock_products.filter(product__platform_id=platform_id)
+                low_stock_products = low_stock_products.filter(
+                    product__platform_id=platform_id
+                )
+
             low_stock_products = low_stock_products.count()
 
-            # Orders by Status
+            # ----------------------------
+            # ORDERS BY STATUS
+            # ----------------------------
             orders_by_status = list(
                 Order.objects.filter(**order_filter)
                 .values("status__label")
                 .annotate(total=Count("id"))
             )
 
-            # Orders by Platform
+            # ----------------------------
+            # ORDERS BY PLATFORM
+            # ----------------------------
             orders_by_platform = list(
-    MarketplaceOrder.objects.filter(sub_orders__product__owner=current_user)
-    .values("platform__name")
-    .annotate(total=Count("sub_orders"))
-)
-
-            # Last 7 days sales trend
-            last_7_days = timezone.now().date() - timedelta(days=7)
-            sales_trend_query = MarketplaceOrder.objects.filter(
-                    order_date__gte=last_7_days,
+                MarketplaceOrder.objects.filter(
                     sub_orders__product__owner=current_user
                 )
+                .values("platform__name")
+                .annotate(total=Count("sub_orders"))
+            )
+
+            # ----------------------------
+            # SALES TREND (LAST 7 DAYS)
+            # ----------------------------
+            last_7_days = timezone.now().date() - timedelta(days=7)
+
+            sales_trend_query = MarketplaceOrder.objects.filter(
+                order_date__gte=last_7_days,
+                sub_orders__product__owner=current_user
+            )
+
             if platform_id:
                 sales_trend_query = sales_trend_query.filter(platform_id=platform_id)
 
@@ -107,19 +151,27 @@ class DashboardController:
                 .annotate(total_orders=Count("sub_orders"))
                 .order_by("order_date")
             )
-            delivery_partner_stats = list(
-                    Order.objects.filter(**order_filter)
-                    .values("delivery_partner__name")
-                    .annotate(
-                        total_orders=Count("id"),
-                        delivered=Count("id", filter=Q(status__code="DELIVERED")),
-                        rto=Count("id", filter=Q(status__code="RTO_COMPLETE")),
-                        cancelled=Count("id", filter=Q(status__code="CANCELLED")),
-                        customer_return=Count("id", filter=Q(status__code="DOOR_STEP_EXCHANGED")),
-                        ready_to_ship=Count("id", filter=Q(status__code="READY_TO_SHIP")),
-                    )
-                )
 
+            # ----------------------------
+            # DELIVERY PARTNER STATS (OPTIMIZED)
+            # ----------------------------
+            delivery_partner_stats = list(
+                Order.objects.filter(**order_filter)
+                .select_related("delivery_partner", "status")
+                .values("delivery_partner__name")
+                .annotate(
+                    total_orders=Count("id"),
+                    delivered=Count("id", filter=Q(status__code="DELIVERED")),
+                    rto=Count("id", filter=Q(status__code="RTO_COMPLETE")),
+                    cancelled=Count("id", filter=Q(status__code="CANCELLED")),
+                    customer_return=Count("id", filter=Q(status__code="DOOR_STEP_EXCHANGED")),
+                    ready_to_ship=Count("id", filter=Q(status__code="READY_TO_SHIP")),
+                )
+            )
+
+            # ----------------------------
+            # RESPONSE
+            # ----------------------------
             return {
                 "summary": {
                     "total_orders": total_orders,
@@ -127,6 +179,7 @@ class DashboardController:
                     "total_sales": total_sales,
                     "total_returns": total_returns,
                     "total_settlement": total_settlement,
+                    "total_claims": total_claims,
                     "low_stock_products": low_stock_products
                 },
                 "orders_by_status": [
@@ -154,6 +207,7 @@ class DashboardController:
                     for x in delivery_partner_stats
                 ]
             }
+
         except Exception as e:
             print(f"Error in DashboardController.get_dashboard: {str(e)}")
 
@@ -164,6 +218,7 @@ class DashboardController:
                     "total_sales": 0,
                     "total_returns": 0,
                     "total_settlement": 0,
+                    "total_claims": 0,
                     "low_stock_products": 0
                 },
                 "orders_by_status": [],

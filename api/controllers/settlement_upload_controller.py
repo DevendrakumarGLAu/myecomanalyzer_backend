@@ -144,55 +144,86 @@ class SettlementUploadController:
                     if not sub_order:
                         skipped += 1
                         skipped_details.append({
-        "row": idx + 2,
-        "reason": "Missing Sub Order ID"
-    })
+                            "row": idx + 2,
+                            "reason": "Missing Sub Order ID"
+                        })
                         continue
 
                     order = orders.get(sub_order)
                     if not order:
                         skipped += 1
                         skipped_details.append({
-        "row": idx + 2,
-        "sub_order": sub_order,
-        "reason": "Order not found in DB"
-    })
+                                "row": idx + 2,
+                                "sub_order": sub_order,
+                                "reason": "Order not found in DB"
+                            })
                         continue
 
                     # ✅ STATUS
-                    status_name = derive_order_status(row, column_mapping)
-                    status_obj = status_cache.get(status_name)
+                    # ✅ SAFE FIELD EXTRACTION
+                    total_sale = clean_number(row.get(column_mapping.get("total_sale_amount")))
+                    total_return = clean_number(row.get(column_mapping.get("total_return_amount")))
+                    final_amt = clean_number(row.get(column_mapping.get("final_settlement_amount")))
+
+                    commission_fee = clean_number(row.get(column_mapping.get("commission_fee")))
+                    shipping_fee = clean_number(row.get(column_mapping.get("shipping_fee")))
+                    return_shipping_charge = clean_number(row.get(column_mapping.get("return_shipping_charge")))
+                    fixed_fee = clean_number(row.get(column_mapping.get("fixed_fee")))
+                    warehousing_fee = clean_number(row.get(column_mapping.get("warehousing_fee")))
 
                     # ✅ CLAIMS
                     claims, compensation, recovery = extract_claim_data(row, column_mapping)
+                    claim_amount = claims
+                    # ✅ STATUS (ADD THIS BLOCK)
+                    status_name = derive_order_status(row, column_mapping)
+                    status_obj = status_cache.get(status_name)
 
-                    # ✅ FINAL AMOUNT FIX
-                    final_amt = clean_number(
-                        row.get(column_mapping.get("final_settlement_amount"))
-                    )
+                    # ✅ FLAGS
+                    live_status_val = str(row.get(column_mapping.get("live_status"), "")).upper()
+                    is_claim = claim_amount > 0
+                    is_return = total_return < 0
+                    is_rto = "RTO" in live_status_val
 
+                    # ✅ FINAL AMOUNT
                     net_amount = final_amt + compensation + claims - recovery
 
                     # ✅ DATA
                     data = {
                         "platform": platform_obj,
                         "transaction_id": row.get(column_mapping.get("transaction_id")),
+
                         "payment_date": pd.to_datetime(
                             row.get(column_mapping.get("payment_date")),
                             errors="coerce"
                         ),
 
+                        "total_sale_amount": total_sale,
+                        "total_return_amount": total_return,
                         "final_settlement_amount": net_amount,
-                        "total_sale_amount": clean_number(row.get(column_mapping.get("total_sale_amount"))),
-                        "total_return_amount": clean_number(row.get(column_mapping.get("total_return_amount"))),
 
-                        "fixed_fee": clean_number(row.get(column_mapping.get("fixed_fee"))),
-                        "warehousing_fee": clean_number(row.get(column_mapping.get("warehousing_fee"))),
+                        # 💰 DEDUCTIONS
+                        "commission_fee": commission_fee,
+                        "shipping_fee": shipping_fee,
+                        "return_shipping_charge": return_shipping_charge,
+                        "fixed_fee": fixed_fee,
+                        "warehousing_fee": warehousing_fee,
+
+                        # 🔁 RETURNS
                         "return_premium": clean_number(row.get(column_mapping.get("return_premium"))),
                         "return_premium_return": clean_number(row.get(column_mapping.get("return_premium_return"))),
 
+                        # 🧾 CLAIMS
+                        "claim_amount": claim_amount,
+
+                        # 🚩 FLAGS
+                        "is_claim": is_claim,
+                        "is_return": is_return,
+                        "is_rto": is_rto,
+
+                        # TAX
                         "gst_percent": clean_number(row.get(column_mapping.get("gst_percent"))),
 
+                        # EXTRA
                         "extra_data": {
                             "claims": claims,
                             "compensation": compensation,
@@ -211,7 +242,7 @@ class SettlementUploadController:
                         updated.append(settlement)
                     else:
                         created.append(OrderSettlement(order=order, **data))
-
+                    orders_to_update = []
                     # ✅ UPDATE ORDER STATUS
                     if status_obj and order.status != status_obj:
                         order.status = status_obj
@@ -238,10 +269,27 @@ class SettlementUploadController:
                         "final_settlement_amount",
                         "total_sale_amount",
                         "total_return_amount",
+
+                        # 💰 deductions
+                        "commission_fee",
+                        "shipping_fee",
+                        "return_shipping_charge",
                         "fixed_fee",
                         "warehousing_fee",
+
+                        # 🔁 returns
                         "return_premium",
                         "return_premium_return",
+
+                        # 🧾 claims (FIX)
+                        "claim_amount",
+
+                        # 🚩 flags (you were also missing these)
+                        "is_claim",
+                        "is_return",
+                        "is_rto",
+
+                        # tax + extra
                         "gst_percent",
                         "extra_data",
                     ],
