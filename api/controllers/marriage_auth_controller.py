@@ -1,7 +1,8 @@
 from fastapi import HTTPException
 import bcrypt
 
-from api.auth import create_access_token
+# from api.auth import create_access_token
+from api.token_manager import TokenManager
 from marriage_user_auth.models import MarriageUser
 
 
@@ -50,7 +51,7 @@ class MarriageAuthController:
             if not bcrypt.checkpw(payload.password.encode(), user.password.encode()):
                 raise HTTPException(status_code=401, detail="Invalid password")
 
-            access_token = create_access_token({"sub": user.email})
+            access_token = TokenManager.create_access_token({"sub": user.email})
             return {
                 "message": "Login success",
                 "access_token": access_token,

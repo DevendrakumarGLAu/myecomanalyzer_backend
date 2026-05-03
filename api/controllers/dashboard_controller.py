@@ -1,5 +1,5 @@
 from django.db.models import Sum, Count, Q
-from datetime import timedelta
+from datetime import timedelta, datetime
 from django.utils import timezone
 
 from orders.models import Order
@@ -12,7 +12,16 @@ from platforms.models import Platform
 class DashboardController:
 
     @staticmethod
-    def get_dashboard(platform_code: str = None, current_user=None):
+    def get_dashboard(
+        platform_code: str = None,
+        date_from: str = None,
+        date_to: str = None,
+        order_status: str = None,
+        delivery_partner: str = None,
+        min_order_amount: float = None,
+        max_order_amount: float = None,
+        current_user=None
+    ):
         try:
             if current_user is None:
                 raise ValueError("current_user must be provided")
@@ -43,17 +52,66 @@ class DashboardController:
                     }
 
             # ----------------------------
+            # DATE FILTERS
+            # ----------------------------
+            date_from_obj = None
+            date_to_obj = None
+            
+            if date_from:
+                try:
+                    date_from_obj = datetime.strptime(date_from, "%Y-%m-%d").date()
+                except ValueError:
+                    date_from_obj = None
+            
+            if date_to:
+                try:
+                    date_to_obj = datetime.strptime(date_to, "%Y-%m-%d").date()
+                except ValueError:
+                    date_to_obj = None
+
+            # ----------------------------
             # ORDER FILTER
             # ----------------------------
             order_filter = {"product__owner": current_user}
+            marketplace_filter = {"sub_orders__product__owner": current_user}
 
             if platform_id:
                 order_filter["marketplace_order__platform_id"] = platform_id
+                marketplace_filter["platform_id"] = platform_id
+
+            # Apply date filters
+            if date_from_obj:
+                marketplace_filter["order_date__gte"] = date_from_obj
+            
+            if date_to_obj:
+                marketplace_filter["order_date__lte"] = date_to_obj
+
+            # Apply order status filter
+            if order_status:
+                order_filter["status__code__iexact"] = order_status
+
+            # Apply delivery partner filter
+            if delivery_partner:
+                order_filter["delivery_partner__name__icontains"] = delivery_partner
 
             # ----------------------------
             # TOTAL ORDERS (FAST)
             # ----------------------------
-            total_orders = Order.objects.filter(**order_filter).count()
+            total_orders_query = Order.objects.filter(**order_filter)
+            
+            # Apply amount filters if provided
+            if min_order_amount is not None or max_order_amount is not None:
+                # Filter by selling_price (unit price) * quantity for order amount
+                if min_order_amount is not None:
+                    total_orders_query = total_orders_query.filter(
+                        Q(selling_price__gte=min_order_amount / 100)  # Approximate filter
+                    )
+                if max_order_amount is not None:
+                    total_orders_query = total_orders_query.filter(
+                        Q(selling_price__lte=max_order_amount / 100)  # Approximate filter
+                    )
+            
+            total_orders = total_orders_query.count()
 
             # ----------------------------
             # TOTAL PRODUCTS
@@ -67,14 +125,50 @@ class DashboardController:
             # ----------------------------
             # SETTLEMENTS (OPTIMIZED - SINGLE QUERY)
             # ----------------------------
-            settlements = OrderSettlement.objects.filter(
+            settlements_query = OrderSettlement.objects.filter(
                 order__product__owner=current_user
             )
 
+            # Apply marketplace filters (date, platform)
+            if date_from_obj:
+                settlements_query = settlements_query.filter(
+                    order__marketplace_order__order_date__gte=date_from_obj
+                )
+            
+            if date_to_obj:
+                settlements_query = settlements_query.filter(
+                    order__marketplace_order__order_date__lte=date_to_obj
+                )
+            
             if platform_id:
-                settlements = settlements.filter(
+                settlements_query = settlements_query.filter(
                     order__marketplace_order__platform_id=platform_id
                 )
+
+            # Apply order status filter
+            if order_status:
+                settlements_query = settlements_query.filter(
+                    order__status__code__iexact=order_status
+                )
+
+            # Apply delivery partner filter
+            if delivery_partner:
+                settlements_query = settlements_query.filter(
+                    order__delivery_partner__name__icontains=delivery_partner
+                )
+
+            # Apply amount filters
+            if min_order_amount is not None:
+                settlements_query = settlements_query.filter(
+                    order__selling_price__gte=min_order_amount / 100
+                )
+            
+            if max_order_amount is not None:
+                settlements_query = settlements_query.filter(
+                    order__selling_price__lte=max_order_amount / 100
+                )
+
+            settlements = settlements_query
 
             totals = settlements.aggregate(
                 total_sales=Sum("total_sale_amount"),
@@ -115,8 +209,19 @@ class DashboardController:
             # ----------------------------
             # ORDERS BY STATUS
             # ----------------------------
+            orders_by_status_query = Order.objects.filter(**order_filter)
+            
+            # Apply marketplace filters
+            if date_from_obj or date_to_obj:
+                date_filters = {}
+                if date_from_obj:
+                    date_filters["marketplace_order__order_date__gte"] = date_from_obj
+                if date_to_obj:
+                    date_filters["marketplace_order__order_date__lte"] = date_to_obj
+                orders_by_status_query = orders_by_status_query.filter(**date_filters)
+            
             orders_by_status = list(
-                Order.objects.filter(**order_filter)
+                orders_by_status_query
                 .values("status__label")
                 .annotate(total=Count("id"))
             )
@@ -124,23 +229,31 @@ class DashboardController:
             # ----------------------------
             # ORDERS BY PLATFORM
             # ----------------------------
+            orders_by_platform_query = MarketplaceOrder.objects.filter(**marketplace_filter)
+            
             orders_by_platform = list(
-                MarketplaceOrder.objects.filter(
-                    sub_orders__product__owner=current_user
-                )
+                orders_by_platform_query
                 .values("platform__name")
                 .annotate(total=Count("sub_orders"))
             )
 
             # ----------------------------
-            # SALES TREND (LAST 7 DAYS)
+            # SALES TREND (LAST 7 DAYS OR DATE RANGE)
             # ----------------------------
-            last_7_days = timezone.now().date() - timedelta(days=7)
-
-            sales_trend_query = MarketplaceOrder.objects.filter(
-                order_date__gte=last_7_days,
-                sub_orders__product__owner=current_user
-            )
+            if date_from_obj and date_to_obj:
+                # Use the provided date range
+                sales_trend_query = MarketplaceOrder.objects.filter(
+                    order_date__gte=date_from_obj,
+                    order_date__lte=date_to_obj,
+                    sub_orders__product__owner=current_user
+                )
+            else:
+                # Default to last 7 days
+                last_7_days = timezone.now().date() - timedelta(days=7)
+                sales_trend_query = MarketplaceOrder.objects.filter(
+                    order_date__gte=last_7_days,
+                    sub_orders__product__owner=current_user
+                )
 
             if platform_id:
                 sales_trend_query = sales_trend_query.filter(platform_id=platform_id)
@@ -155,8 +268,19 @@ class DashboardController:
             # ----------------------------
             # DELIVERY PARTNER STATS (OPTIMIZED)
             # ----------------------------
+            delivery_partner_stats_query = Order.objects.filter(**order_filter)
+            
+            # Apply marketplace filters
+            if date_from_obj or date_to_obj:
+                date_filters = {}
+                if date_from_obj:
+                    date_filters["marketplace_order__order_date__gte"] = date_from_obj
+                if date_to_obj:
+                    date_filters["marketplace_order__order_date__lte"] = date_to_obj
+                delivery_partner_stats_query = delivery_partner_stats_query.filter(**date_filters)
+            
             delivery_partner_stats = list(
-                Order.objects.filter(**order_filter)
+                delivery_partner_stats_query
                 .select_related("delivery_partner", "status")
                 .values("delivery_partner__name")
                 .annotate(

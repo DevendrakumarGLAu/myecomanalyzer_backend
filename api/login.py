@@ -3,6 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from django.contrib.auth import authenticate
+from api.token_manager import TokenManager
 from users.models import UserProfile
 from api import auth  # JWT helpers
 
@@ -48,7 +49,8 @@ def login(credentials: LoginRequest):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     
     # Create JWT token
-    token = auth.create_access_token({"sub": user.username})
+    # token = TokenManager.create_access_token({"sub": str(user.id)},username=user.username)
+    token = TokenManager.create_access_token(user_id=str(user.id),username=user.username)
     
     # Return token + user_id + subscription/trial info
     return TokenResponse(

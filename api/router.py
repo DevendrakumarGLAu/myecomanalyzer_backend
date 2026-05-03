@@ -2,6 +2,7 @@ from fastapi import APIRouter
 from api import signup
 from api import login
 from api import auth
+from api.auth_endpoints import router as secure_auth_router
 
 
 # F:\project\ecomm-profit\backend\api\v_1\apis_endpoint\product_v1.py
@@ -9,10 +10,15 @@ from api import auth
 # Central router
 router = APIRouter(prefix="/api/v1")
 
+# Include new secure auth endpoints (replaces old auth)
+router.include_router(secure_auth_router)  # /api/v1/auth/*
+
 # Include all sub-routers
-router.include_router(auth.router)     # /api/v1/auth/test
-router.include_router(signup.router)   # /api/v1/auth/signup
-router.include_router(login.router)    # /api/v1/auth/login
+from api.auth_endpoints import router as auth_router
+router.include_router(auth_router, prefix="/auth", tags=["Auth"])
+# router.include_router(auth.router)     # /api/v1/auth/test
+router.include_router(signup.router)   # /api/v1/auth/signup (deprecated, use /auth/signup)
+router.include_router(login.router)    # /api/v1/auth/login (deprecated, use /auth/login)
 
 # category
 from api.v_1.apis_endpoint.categories_v1 import router as category_router
