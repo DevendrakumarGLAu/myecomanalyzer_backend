@@ -10,13 +10,57 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "core.settings")
 django.setup()
 
 # 3️⃣ Now import FastAPI and routers
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi import APIRouter
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from api.router import router as api_v1_router
 from fastapi.middleware.cors import CORSMiddleware
 # F:\project\ecomm-profit\backend\api\router.py
 
-app = FastAPI(title="MyEcomAnalyzer API")
+# Security scheme for Swagger
+security = HTTPBearer()
+
+
+app = FastAPI(
+    title="MyEcomAnalyzer API",
+    description="E-commerce Analytics and Management API",
+    version="1.0.0",
+    swagger_ui_parameters={
+        "persistAuthorization": True,
+        "displayRequestDuration": True,
+    }
+)
+
+@app.get("/test")
+def test_token(
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    token = credentials.credentials
+    return {"token": token}
+# Configure OpenAPI security scheme
+from fastapi.openapi.utils import get_openapi
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    openapi_schema = get_openapi(
+        title="MyEcomAnalyzer API",
+        version="1.0.0",
+        description="E-commerce Analytics and Management API",
+        routes=app.routes,
+    )
+    openapi_schema["components"]["securitySchemes"] = {
+        "BearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+        }
+    }
+    openapi_schema["security"] = [{"BearerAuth": []}]
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+app.openapi = custom_openapi
 origins = [
     "http://localhost:4200",
     "http://127.0.0.1:4200",

@@ -350,3 +350,143 @@ class DashboardController:
                 "sales_trend": [],
                 "delivery_partner_stats": []
             }
+
+    @staticmethod
+    def get_notifications(current_user=None, platform_code: str = None):
+        try:
+            if current_user is None:
+                raise ValueError("current_user must be provided")
+
+            # Platform filter
+            platform_filter = {}
+            if platform_code:
+                try:
+                    platform = Platform.objects.get(code__iexact=platform_code)
+                    platform_filter["platform_id"] = platform.id
+                except Platform.DoesNotExist:
+                    return {"notifications": []}
+
+            notifications = []
+
+            # 1. Low stock products (stock < 10)
+            low_stock_variants = ProductVariant.objects.filter(
+                product__owner=current_user,
+                stock__lt=10,
+                stock__gt=0
+            ).select_related('product').order_by('stock')[:5]
+
+            for variant in low_stock_variants:
+                notifications.append({
+                    "type": "warning",
+                    "title": "Low Stock Alert",
+                    "message": f"Product '{variant.product.name}' (SKU: {variant.sku}) has only {variant.stock} units left",
+                    "product_id": variant.product.id,
+                    "variant_id": variant.id,
+                    "priority": "high"
+                })
+
+            # 2. Out of stock products
+            out_of_stock_variants = ProductVariant.objects.filter(
+                product__owner=current_user,
+                stock=0
+            ).select_related('product')[:5]
+
+            for variant in out_of_stock_variants:
+                notifications.append({
+                    "type": "error",
+                    "title": "Out of Stock",
+                    "message": f"Product '{variant.product.name}' (SKU: {variant.sku}) is out of stock",
+                    "product_id": variant.product.id,
+                    "variant_id": variant.id,
+                    "priority": "high"
+                })
+
+            # 3. Most sold products (by quantity in last 30 days)
+            thirty_days_ago = timezone.now().date() - timedelta(days=30)
+            most_sold_products = Order.objects.filter(
+                product__owner=current_user,
+                marketplace_order__order_date__gte=thirty_days_ago
+            ).values('product__name', 'product__id').annotate(
+                total_quantity=Sum('quantity')
+            ).order_by('-total_quantity')[:3]
+
+            for product in most_sold_products:
+                notifications.append({
+                    "type": "info",
+                    "title": "Top Selling Product",
+                    "message": f"'{product['product__name']}' sold {product['total_quantity']} units in the last 30 days",
+                    "product_id": product['product__id'],
+                    "priority": "medium"
+                })
+
+            # 4. Most profitable products (revenue - cost in last 30 days)
+            profitable_products = Order.objects.filter(
+                product__owner=current_user,
+                marketplace_order__order_date__gte=thirty_days_ago
+            ).values(
+                'product__name', 
+                'product__id'
+            ).annotate(
+                total_revenue=Sum('selling_price') * Sum('quantity'),
+                total_cost=Sum('variant__cost_price') * Sum('quantity'),
+                profit=Sum('selling_price') * Sum('quantity') - Sum('variant__cost_price') * Sum('quantity')
+            ).order_by('-profit')[:3]
+
+            for product in profitable_products:
+                if product['profit'] > 0:
+                    notifications.append({
+                        "type": "success",
+                        "title": "High Profit Product",
+                        "message": f"'{product['product__name']}' generated ₹{product['profit']:.2f} profit in the last 30 days",
+                        "product_id": product['product__id'],
+                        "priority": "medium"
+                    })
+
+            # 5. Products with losses (negative profit)
+            loss_products = Order.objects.filter(
+                product__owner=current_user,
+                marketplace_order__order_date__gte=thirty_days_ago
+            ).values(
+                'product__name', 
+                'product__id'
+            ).annotate(
+                total_revenue=Sum('selling_price') * Sum('quantity'),
+                total_cost=Sum('variant__cost_price') * Sum('quantity'),
+                profit=Sum('selling_price') * Sum('quantity') - Sum('variant__cost_price') * Sum('quantity')
+            ).filter(profit__lt=0).order_by('profit')[:3]
+
+            for product in loss_products:
+                notifications.append({
+                    "type": "error",
+                    "title": "Loss Making Product",
+                    "message": f"'{product['product__name']}' incurred ₹{abs(product['profit']):.2f} loss in the last 30 days",
+                    "product_id": product['product__id'],
+                    "priority": "high"
+                })
+
+            # 6. Recent high-value orders
+            recent_high_value_orders = Order.objects.filter(
+                product__owner=current_user,
+                marketplace_order__order_date__gte=thirty_days_ago,
+                selling_price__gte=1000  # Orders worth more than ₹1000
+            ).select_related('product', 'marketplace_order').order_by('-marketplace_order__order_date')[:3]
+
+            for order in recent_high_value_orders:
+                notifications.append({
+                    "type": "info",
+                    "title": "High Value Order",
+                    "message": f"Order for '{order.product.name}' worth ₹{order.selling_price:.2f} placed on {order.marketplace_order.order_date}",
+                    "product_id": order.product.id,
+                    "order_id": order.id,
+                    "priority": "low"
+                })
+
+            # Sort notifications by priority (high -> medium -> low)
+            priority_order = {"high": 0, "medium": 1, "low": 2}
+            notifications.sort(key=lambda x: priority_order.get(x["priority"], 3))
+
+            return {"notifications": notifications[:10]}  # Return top 10 notifications
+
+        except Exception as e:
+            print(f"Error in DashboardController.get_notifications: {str(e)}")
+            return {"notifications": []}

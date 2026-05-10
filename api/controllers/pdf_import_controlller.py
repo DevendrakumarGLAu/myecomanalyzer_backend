@@ -271,29 +271,46 @@ class InvoiceExtractController:
                         }
                     )
 
-                    Order.objects.create(
-                        marketplace_order=marketplace_order,
-                        marketplace_sub_order_id=data["marketplace_sub_order_id"],
-                        product=product,
-                        variant=variant,
-                        quantity=data["quantity"],
-                        selling_price=data["selling_price"],
-                        status=status,
-                        delivery_partner=delivery_partner_obj,
-                        payment_type=data.get("payment_type", "COD"),
-                        created_by=current_user,
-                        updated_by=current_user
-                    )
+                    if variant.stock is None:
+                        variant.stock = 0
+
+                    if variant.stock < data["quantity"]:
+                        error_orders.append({
+                            "order_id": data.get("marketplace_sub_order_id"),
+                            "sku": data.get("sku"),
+                            "size": data.get("size"),
+                            "color": data.get("color"),
+                            "reason": "Insufficient stock for variant"
+                        })
+                        continue
+
+                    with transaction.atomic():
+                        Order.objects.create(
+                            marketplace_order=marketplace_order,
+                            marketplace_sub_order_id=data["marketplace_sub_order_id"],
+                            product=product,
+                            variant=variant,
+                            quantity=data["quantity"],
+                            selling_price=data["selling_price"],
+                            status=status,
+                            delivery_partner=delivery_partner_obj,
+                            payment_type=data.get("payment_type", "COD"),
+                            created_by=current_user,
+                            updated_by=current_user
+                        )
+
+                        variant.stock = variant.stock - data["quantity"]
+                        variant.save(update_fields=["stock"])
 
                     imported_orders.append(data["marketplace_sub_order_id"])
 
-                except ProductVariant.DoesNotExist:
+                except ProductVariant.DoesNotExist as ex:
                     error_orders.append({
                         "order_id": data.get("marketplace_sub_order_id"),
                         "sku": data.get("sku"),
                         "size": data.get("size"),
                         "color": data.get("color"),
-                        "reason": str(e)   # ✅ changed key from "error" → "reason"
+                        "reason": str(ex)
                     })
 
                 except Exception as e:
@@ -660,13 +677,25 @@ class InvoiceExtractController:
                 "is_duplicate": True
             }
 
+        quantity = int(data.get("quantity", 1)) if data.get("quantity") is not None else 1
+        if variant.stock is None:
+            variant.stock = 0
+
+        if variant.stock < quantity:
+            return {
+                "success": False,
+                "message": "Insufficient stock for variant",
+                "available_stock": variant.stock,
+                "requested_quantity": quantity
+            }
+
         # ✅ Create Order
         order = Order.objects.create(
             marketplace_order=marketplace_order,
             marketplace_sub_order_id=data["sub_order_id"],
             product=product,
             variant=variant,
-            quantity=data.get("quantity", 1),
+            quantity=quantity,
             selling_price=data.get("selling_price", 0),
             status=status,
             delivery_partner_id=delivery_partner_id,
@@ -675,9 +704,12 @@ class InvoiceExtractController:
             updated_by=current_user
         )
 
+        variant.stock = variant.stock - quantity
+        variant.save(update_fields=["stock"])
+
         return {
             "success": True,
             "message": "Order created successfully",
             "order_id": order.marketplace_sub_order_id,
-            "is_duplicate": True if existing_order else False
+            "is_duplicate": False
         }
