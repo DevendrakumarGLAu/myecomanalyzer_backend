@@ -1,4 +1,4 @@
-from django.db.models import Sum, Count, Q
+from django.db.models import Sum, Count, Q, F
 from datetime import timedelta, datetime
 from django.utils import timezone
 
@@ -43,6 +43,7 @@ class DashboardController:
                             "total_returns": 0,
                             "total_settlement": 0,
                             "total_claims": 0,
+                            "total_profit": 0,
                             "low_stock_products": 0
                         },
                         "orders_by_status": [],
@@ -192,6 +193,66 @@ class DashboardController:
             total_claims = totals["total_claims"] or 0
 
             # ----------------------------
+            # PROFIT CALCULATION
+            # ----------------------------
+            profit_query = OrderSettlement.objects.filter(
+                order__product__owner=current_user
+            ).select_related('order__variant')
+
+            # Apply the same filters as settlements_query
+            if date_from_obj:
+                profit_query = profit_query.filter(
+                    order__marketplace_order__order_date__gte=date_from_obj
+                )
+            
+            if date_to_obj:
+                profit_query = profit_query.filter(
+                    order__marketplace_order__order_date__lte=date_to_obj
+                )
+            
+            if platform_id:
+                profit_query = profit_query.filter(
+                    order__marketplace_order__platform_id=platform_id
+                )
+
+            if order_status:
+                profit_query = profit_query.filter(
+                    order__status__code__iexact=order_status
+                )
+
+            if delivery_partner:
+                profit_query = profit_query.filter(
+                    order__delivery_partner__name__icontains=delivery_partner
+                )
+
+            if min_order_amount is not None:
+                profit_query = profit_query.filter(
+                    order__selling_price__gte=min_order_amount / 100
+                )
+            
+            if max_order_amount is not None:
+                profit_query = profit_query.filter(
+                    order__selling_price__lte=max_order_amount / 100
+                )
+
+            # Calculate total profit: sum(final_settlement_amount - cost_price * quantity)
+            profit_totals = profit_query.aggregate(
+                total_settlement_sum=Sum("final_settlement_amount"),
+                total_cost_sum=Sum("order__variant__cost_price") * Sum("order__quantity")  # This won't work directly
+            )
+
+            # Actually, need to calculate per order: final_settlement - (cost_price * quantity)
+            # Since final_settlement is per settlement, and cost_price * quantity per order
+            # But settlements are per order, so we can do:
+            profit_orders = profit_query.annotate(
+                profit_per_order=F("final_settlement_amount") - F("order__variant__cost_price") * F("order__quantity")
+            ).aggregate(
+                total_profit=Sum("profit_per_order")
+            )
+
+            total_profit = profit_orders["total_profit"] or 0
+
+            # ----------------------------
             # LOW STOCK PRODUCTS
             # ----------------------------
             low_stock_products = ProductVariant.objects.filter(
@@ -304,6 +365,7 @@ class DashboardController:
                     "total_returns": total_returns,
                     "total_settlement": total_settlement,
                     "total_claims": total_claims,
+                    "total_profit": total_profit,
                     "low_stock_products": low_stock_products
                 },
                 "orders_by_status": [
@@ -343,6 +405,7 @@ class DashboardController:
                     "total_returns": 0,
                     "total_settlement": 0,
                     "total_claims": 0,
+                    "total_profit": 0,
                     "low_stock_products": 0
                 },
                 "orders_by_status": [],

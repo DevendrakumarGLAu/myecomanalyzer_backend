@@ -10,6 +10,7 @@ class DashboardSummary(BaseModel):
     total_settlement: float
     low_stock_products: int
     total_claims: float
+    total_profit:float
 
 
 class StatusData(BaseModel):

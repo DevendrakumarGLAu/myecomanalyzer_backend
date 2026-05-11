@@ -424,6 +424,17 @@ class InvoiceExtractController:
             data = []
             for o in orders:
                 settlement = o.settlements.order_by('-payment_date').first()
+                total_deductions = 0
+                if settlement:
+                    total_deductions = (
+                        settlement.commission_fee +
+                        settlement.fixed_fee +
+                        settlement.shipping_fee +
+                        settlement.return_shipping_charge +
+                        settlement.warehousing_fee +
+                        settlement.claim_amount
+                    )
+                profit = o.selling_price - (o.variant.cost_price if o.variant else 0) - total_deductions
                 data.append({
                     "order_id": o.marketplace_order.marketplace_order_id,
                     "sub_order_id": o.marketplace_sub_order_id,
@@ -431,7 +442,10 @@ class InvoiceExtractController:
                     "sku": o.variant.sku if o.variant else None,
                     "size": o.variant.size if o.variant else None,
                     "color": o.variant.color if o.variant else None,
+                    "selling_price": o.selling_price,
+                    "cost_price": o.variant.cost_price if o.variant else 0,
                     "settlement_amount": float(settlement.final_settlement_amount) if settlement else 0,
+                    "profit": profit,
                     "status": o.status.label,
                     "status_code": o.status.code,
                     "order_date": o.marketplace_order.order_date if o.marketplace_order else None

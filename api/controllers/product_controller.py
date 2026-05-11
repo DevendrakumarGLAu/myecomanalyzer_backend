@@ -2,7 +2,7 @@ from typing import Optional
 from django.contrib.auth.models import User
 from api.controllers.pagination_controller import Pagination
 from platforms.models import Platform
-from products.models import Product, ProductVariant
+from products.models import Product, ProductVariant, CostPriceUpdateHistory
 from fastapi import HTTPException
 from api.schemas.product_schema import ProductRequest, ProductResponse, ProductUpdateRequest, ProductVariantResponse
 from django.db.models import Q
@@ -221,6 +221,7 @@ class ProductController:
                     if variant_id and variant_id in existing_variants:
                         # Update existing variant
                         variant = existing_variants[variant_id]
+                        old_cost_price = variant.cost_price
                         variant.sku = variant_data.sku
                         variant.size = variant_data.size
                         variant.color = variant_data.color
@@ -229,6 +230,13 @@ class ProductController:
                         variant.stock = variant_data.stock
                         variant.shipping_cost = variant_data.shipping_cost or 0.0
                         variant.rto_cost = variant_data.rto_cost or 0.0
+                        if old_cost_price != variant_data.cost_price:
+                            CostPriceUpdateHistory.objects.create(
+                                variant=variant,
+                                old_cost_price=old_cost_price,
+                                new_cost_price=variant_data.cost_price,
+                                updated_by=current_user
+                            )
                         variant.save()
                         incoming_ids.append(variant_id)
                     else:

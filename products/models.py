@@ -44,3 +44,14 @@ class ProductVariant(models.Model):
         indexes = [
         models.Index(fields=["sku", "size", "color"]),
     ]
+
+
+class CostPriceUpdateHistory(BaseModel):
+    variant = models.ForeignKey(ProductVariant, on_delete=models.CASCADE, related_name="cost_price_updates")
+    old_cost_price = models.FloatField()
+    new_cost_price = models.FloatField()
+    updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+
+    class Meta:
+        db_table = "cost_price_update_history"
+        ordering = ['-created_at']
