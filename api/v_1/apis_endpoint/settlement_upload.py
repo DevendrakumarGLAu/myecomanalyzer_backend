@@ -2,6 +2,7 @@ from io import BytesIO
 from fastapi import APIRouter, Depends, Query, UploadFile, File, HTTPException
 import pandas as pd
 from datetime import datetime
+from api.v_1.apis_endpoint.file_validation import validate_file_extension
 
 from api.auth import get_current_user
 from api.controllers.settlement_upload_controller import SettlementUploadController
@@ -18,6 +19,7 @@ def upload_settlement_excel(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user)
 ):
+    validate_file_extension(file, [".xls", ".xlsx", ".xlsm"], field_name="file")
 
     return SettlementUploadController.upload_settlement_excel(
         file.file,

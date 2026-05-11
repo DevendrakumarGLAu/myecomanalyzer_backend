@@ -2,6 +2,7 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 import mysql.connector
 import pandas as pd
 import io
+from api.v_1.apis_endpoint.file_validation import validate_file_extension
 
 router = APIRouter()
 
@@ -38,6 +39,8 @@ async def upload_csv(
             raise HTTPException(status_code=400, detail="Invalid database name")
         if not table_name.isidentifier():
             raise HTTPException(status_code=400, detail="Invalid table name")
+
+        validate_file_extension(file, [".csv"], field_name="file")
 
         # Read CSV into DataFrame
         content = await file.read()

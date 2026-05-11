@@ -1,11 +1,12 @@
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, UploadFile, File, Query, HTTPException,Depends
+from fastapi import APIRouter, UploadFile, File, Query, HTTPException, Depends
 import shutil
 import os
 
 from api.controllers.pdf_import_controlller import InvoiceExtractController
+from api.v_1.apis_endpoint.file_validation import validate_file_extension
 from asgiref.sync import sync_to_async
 from django.contrib.auth.models import User
 from api.auth import get_current_user
@@ -23,12 +24,7 @@ async def upload_invoice(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user)
 ):
-    if not file.filename.lower().endswith(".pdf"):
-        return {
-            "success": False,
-            "message": "Only PDF files are allowed",
-            "data": None
-        }
+    validate_file_extension(file, [".pdf"], field_name="file")
 
     file_path = os.path.join(UPLOAD_DIR, file.filename)
 
@@ -99,8 +95,7 @@ def upload_order_status(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user)
 ):
-    if not file.filename.endswith(".csv"):
-        raise HTTPException(status_code=400, detail="Only CSV allowed")
+    validate_file_extension(file, [".csv"], field_name="file")
 
     try:
         result = InvoiceExtractController.update_order_status_from_csv(
