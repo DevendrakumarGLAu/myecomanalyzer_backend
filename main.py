@@ -13,7 +13,7 @@ django.setup()
 from fastapi import Depends, FastAPI
 from fastapi import APIRouter
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from api.router import router as api_v1_router
+from api.router import router as api_v1_router, ai_router
 from fastapi.middleware.cors import CORSMiddleware
 # F:\project\ecomm-profit\backend\api\router.py
 
@@ -74,7 +74,8 @@ app.add_middleware(
     allow_methods=["*"],        # allow all HTTP methods (POST, GET, OPTIONS, etc.)
     allow_headers=["*"],        # allow all headers
 )
-# 4️⃣ Include router
+# 4️⃣ Include routers
 router = APIRouter()
 app.include_router(api_v1_router)
+app.include_router(ai_router)
 # uvicorn main:app --reload

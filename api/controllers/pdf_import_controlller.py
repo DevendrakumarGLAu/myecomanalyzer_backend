@@ -469,79 +469,277 @@ class InvoiceExtractController:
     def update_order_status_from_csv(file, current_user):
         content = file.read().decode("utf-8")
         reader = csv.DictReader(StringIO(content))
-
+        rows = list(reader)
         updated = []
         errors = []
         not_found = []
+        
+        sub_order_ids = []
 
-        with transaction.atomic():
-            for idx, row in enumerate(reader, start=1):
-                try:
-                    sub_order_id = row.get("Sub Order No")
-                    raw_status = row.get("Reason for Credit Entry")
+        # with transaction.atomic():
+        #     for idx, row in enumerate(reader, start=1):
+        #         try:
+        #             sub_order_id = row.get("Sub Order No")
+        #             raw_status = row.get("Reason for Credit Entry")
 
-                    if not sub_order_id or not raw_status:
-                        errors.append({
-                            "row": idx,
-                            "reason": "Missing Sub Order No or Status"
-                        })
-                        continue
+        #             if not sub_order_id or not raw_status:
+        #                 errors.append({
+        #                     "row": idx,
+        #                     "reason": "Missing Sub Order No or Status"
+        #                 })
+        #                 continue
 
-                    # Map status
-                    status_code = STATUS_MAPPING.get(
-                        raw_status.strip(), raw_status.strip()
-                    )
+        #             # Map status
+        #             status_code = STATUS_MAPPING.get(
+        #                 raw_status.strip(), raw_status.strip()
+        #             )
 
-                    status_label = status_code.replace("_", " ").title()
+        #             status_label = status_code.replace("_", " ").title()
 
-                    # Get/Create status
-                    status_obj, _ = OrderStatus.objects.get_or_create(
+        #             # Get/Create status
+        #             status_obj, _ = OrderStatus.objects.get_or_create(
+        #                 code=status_code,
+        #                 defaults={
+        #                     "label": status_label,
+        #                     "created_by": current_user,
+        #                     "updated_by": current_user
+        #                 }
+        #             )
+
+        #             # Find order
+        #             order = Order.objects.filter(
+        #                 marketplace_sub_order_id=sub_order_id
+        #             ).first()
+
+        #             if not order:
+        #                 not_found.append({
+        #                     "sub_order_id": sub_order_id,
+        #                     "reason": "Order not found"
+        #                 })
+        #                 continue
+
+        #             # Update status
+        #             order.status = status_obj
+        #             order.updated_by = current_user
+        #             order.save()
+
+        #             updated.append({
+        #                 "sub_order_id": sub_order_id,
+        #                 "status": status_code
+        #             })
+
+        #         except Exception as e:
+        #             errors.append({
+        #                 "row": idx,
+        #                 "sub_order_id": row.get("Sub Order No"),
+        #                 "reason": str(e)
+        #             })
+
+        # return {
+        #     "summary": {
+        #         "total": len(updated) + len(errors) + len(not_found),
+        #         "updated": len(updated),
+        #         "errors": len(errors),
+        #         "not_found": len(not_found)
+        #     },
+        #     "updated_orders": updated,
+        #     "errors": errors,
+        #     "not_found": not_found
+        # }
+        for row in rows:
+            sub_order_id = row.get("Sub Order No")
+
+            if sub_order_id:
+                sub_order_ids.append(sub_order_id.strip())
+
+        # -----------------------------------
+        # FETCH ORDERS IN SINGLE QUERY
+        # -----------------------------------
+
+        orders_queryset = Order.objects.filter(
+            marketplace_sub_order_id__in=sub_order_ids
+        )
+
+        orders_map = {
+            order.marketplace_sub_order_id: order
+            for order in orders_queryset
+        }
+
+        # -----------------------------------
+        # FETCH EXISTING STATUSES
+        # -----------------------------------
+
+        existing_statuses = {
+            status.code: status
+            for status in OrderStatus.objects.all()
+        }
+
+        # -----------------------------------
+        # CREATE MISSING STATUSES
+        # -----------------------------------
+
+        statuses_to_create = []
+
+        for row in rows:
+
+            raw_status = row.get("Reason for Credit Entry")
+
+            if not raw_status:
+                continue
+
+            raw_status = raw_status.strip()
+
+            status_code = STATUS_MAPPING.get(
+                raw_status,
+                raw_status.upper().replace(" ", "_")
+            )
+
+            if status_code not in existing_statuses:
+
+                status_label = status_code.replace("_", " ").title()
+
+                statuses_to_create.append(
+                    OrderStatus(
                         code=status_code,
-                        defaults={
-                            "label": status_label,
-                            "created_by": current_user,
-                            "updated_by": current_user
-                        }
+                        label=status_label,
+                        created_by=current_user,
+                        updated_by=current_user
                     )
+                )
 
-                    # Find order
-                    order = Order.objects.filter(
-                        marketplace_sub_order_id=sub_order_id
-                    ).first()
+        # BULK CREATE NEW STATUSES
+        if statuses_to_create:
 
-                    if not order:
-                        not_found.append({
-                            "sub_order_id": sub_order_id,
-                            "reason": "Order not found"
-                        })
-                        continue
+            try:
+                OrderStatus.objects.bulk_create(
+                    statuses_to_create,
+                    ignore_conflicts=True
+                )
 
-                    # Update status
-                    order.status = status_obj
-                    order.updated_by = current_user
-                    order.save()
+            except IntegrityError as e:
+                logger.exception(e)
 
-                    updated.append({
-                        "sub_order_id": sub_order_id,
-                        "status": status_code
-                    })
+        # -----------------------------------
+        # RELOAD STATUSES
+        # -----------------------------------
 
-                except Exception as e:
+        existing_statuses = {
+            status.code: status
+            for status in OrderStatus.objects.all()
+        }
+
+        # -----------------------------------
+        # PROCESS ORDERS
+        # -----------------------------------
+
+        orders_to_update = []
+
+        for idx, row in enumerate(rows, start=1):
+
+            try:
+                sub_order_id = row.get("Sub Order No")
+                raw_status = row.get("Reason for Credit Entry")
+
+                # -----------------------------
+                # VALIDATION
+                # -----------------------------
+
+                if not sub_order_id or not raw_status:
                     errors.append({
                         "row": idx,
-                        "sub_order_id": row.get("Sub Order No"),
-                        "reason": str(e)
+                        "reason": "Missing Sub Order No or Status"
                     })
+                    continue
+
+                sub_order_id = sub_order_id.strip()
+                raw_status = raw_status.strip()
+
+                # -----------------------------
+                # MAP STATUS
+                # -----------------------------
+
+                status_code = STATUS_MAPPING.get(
+                    raw_status,
+                    raw_status.upper().replace(" ", "_")
+                )
+
+                status_obj = existing_statuses.get(status_code)
+
+                if not status_obj:
+                    errors.append({
+                        "row": idx,
+                        "sub_order_id": sub_order_id,
+                        "reason": f"Invalid status: {raw_status}"
+                    })
+                    continue
+
+                # -----------------------------
+                # FIND ORDER
+                # -----------------------------
+
+                order = orders_map.get(sub_order_id)
+
+                if not order:
+                    not_found.append({
+                        "sub_order_id": sub_order_id,
+                        "reason": "Order not found"
+                    })
+                    continue
+
+                # -----------------------------
+                # UPDATE ORDER
+                # -----------------------------
+
+                order.status = status_obj
+                order.updated_by = current_user
+
+                orders_to_update.append(order)
+
+                updated.append({
+                    "sub_order_id": sub_order_id,
+                    "status": status_code
+                })
+
+            except Exception as e:
+
+                logger.exception(e)
+
+                errors.append({
+                    "row": idx,
+                    "sub_order_id": row.get("Sub Order No"),
+                    "reason": "Internal server error"
+                })
+
+        # -----------------------------------
+        # BULK UPDATE ORDERS
+        # -----------------------------------
+
+        if orders_to_update:
+
+            Order.objects.bulk_update(
+                orders_to_update,
+                [
+                    "status",
+                    "updated_by"
+                ]
+            )
+
+        # -----------------------------------
+        # RETURN RESPONSE
+        # -----------------------------------
 
         return {
             "summary": {
-                "total": len(updated) + len(errors) + len(not_found),
+                "total": len(rows),
                 "updated": len(updated),
                 "errors": len(errors),
                 "not_found": len(not_found)
             },
+
             "updated_orders": updated,
+
             "errors": errors,
+
             "not_found": not_found
         }
     @staticmethod

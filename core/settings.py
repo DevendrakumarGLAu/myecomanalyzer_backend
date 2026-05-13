@@ -66,6 +66,7 @@ INSTALLED_APPS = [
     'marriage_biodata',
     'biodata_templates',
     'notifications',
+    'ai'
     
 ]
 
