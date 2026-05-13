@@ -5,14 +5,14 @@ from api.openai_service import LangChainService
 from api.prompt_builder import PromptBuilder
 from api.schemas.ai_schema import AIChatResponse
 from django.contrib.auth.models import User
-
+import json
 
 class AIController:
     @staticmethod
     def process_chat(user: User, user_message: str, platform_code: str | None = None) -> AIChatResponse:
         intent = IntentClassifier.classify(user_message)
         analytics = AnalyticsService.fetch_analytics(user, platform_code)
-
+        analytics = json.loads(json.dumps(analytics, default=str))
         prompt_messages = PromptBuilder.build_messages(
             user_message=user_message,
             intent=intent,
@@ -43,6 +43,7 @@ class AIController:
         intent = IntentClassifier.classify(user_message)
         analytics = AnalyticsService.fetch_analytics(user, platform_code)
 
+        analytics = json.loads(json.dumps(analytics, default=str))
         prompt_messages = PromptBuilder.build_messages(
             user_message=user_message,
             intent=intent,

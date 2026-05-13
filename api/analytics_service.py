@@ -93,14 +93,19 @@ class AnalyticsService:
             dead_inventory_variants = dead_inventory_variants.filter(product__platform=platform)
 
         dead_inventory_count = dead_inventory_variants.count()
-        dead_inventory_examples = list(
-            dead_inventory_variants.values(
-                variant_sku=F("sku"),
-                product_name=F("product__name"),
-                variant_stock=F("stock"),
-                last_sold_date=F("last_sold_date"),
-            )[:5]
-        )
+ 
+        dead_inventory_examples = [
+                {
+                    key: (value.isoformat() if hasattr(value, "isoformat") else value)
+                    for key, value in row.items()
+                }
+                for row in dead_inventory_variants.values(
+                    variant_sku=F("sku"),
+                    product_name=F("product__name"),
+                    variant_stock=F("stock"),
+                    last_sold_date=F("last_sold_date"),
+                )[:5]
+            ]
 
         top_product_rows = (
             settlements
@@ -125,28 +130,36 @@ class AnalyticsService:
                 "sku": row["variant_sku"],
                 "product_name": row["product_name"],
                 "stock": int(row["variant_stock"] or 0),
-                "total_revenue": float(row["total_revenue"] or 0),
-                "total_profit": float(row["total_profit"] or 0),
+                "sales": float(row["total_revenue"] or 0),
+                "profit": float(row["total_profit"] or 0),
                 "order_count": int(row["order_count"]),
             }
             for row in top_product_rows
         ]
 
         platform_performance_rows = (
-            MarketplaceOrder.objects.filter(marketplace_filter)
-            .values("platform__name")
+            settlements
+            .values("order__marketplace_order__platform__name")
             .annotate(
-                order_count=Count("sub_orders"),
-                revenue=Sum("sub_orders__selling_price"),
+                platform_name=F("order__marketplace_order__platform__name"),
+                cost=F("order__variant__cost_price") * F("order__quantity"),
+                profit=F("final_settlement_amount") - F("cost"),
+            )
+            .values("platform_name")
+            .annotate(
+                order_count=Count("id"),
+                revenue=Sum("final_settlement_amount"),
+                total_profit=Sum("profit"),
             )
             .order_by("-order_count")
         )
 
         platform_performance = [
             {
-                "platform": row["platform__name"],
-                "order_count": int(row["order_count"] or 0),
-                "revenue": float(row["revenue"] or 0),
+                "platform": row["platform_name"] or "Unknown",
+                "sales": float(row["revenue"] or 0),
+                "profit": float(row["total_profit"] or 0),
+                "orders": int(row["order_count"] or 0),
             }
             for row in platform_performance_rows
         ]
