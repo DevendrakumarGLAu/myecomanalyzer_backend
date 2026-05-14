@@ -2,10 +2,12 @@ from api.analytics_service import AnalyticsService
 from api.chat_history_service import ChatHistoryService
 from api.intent_classifier import IntentClassifier
 from api.openai_service import LangChainService
+import json
+import re
+
 from api.prompt_builder import PromptBuilder
 from api.schemas.ai_schema import AIChatResponse
 from django.contrib.auth.models import User
-import json
 
 class AIController:
     @staticmethod
@@ -21,6 +23,7 @@ class AIController:
         )
 
         ai_reply = LangChainService.create_chat_completion(prompt_messages)
+        ai_reply = AIController._sanitize_reply(ai_reply)
 
         ChatHistoryService.save_chat_history(
             user=user,
@@ -37,6 +40,22 @@ class AIController:
             intent=intent,
             analytics_used=analytics["summary"],
         )
+
+    @staticmethod
+    def _sanitize_reply(reply: str) -> str:
+        if not isinstance(reply, str):
+            return reply
+
+        cleaned = reply
+        cleaned = re.sub(r"\*\*(.*?)\*\*", r"\1", cleaned)
+        cleaned = re.sub(r"\*(.*?)\*", r"\1", cleaned)
+        cleaned = re.sub(r"#{1,6}\s*", "", cleaned)
+        cleaned = re.sub(r"`([^`]+)`", r"\1", cleaned)
+        cleaned = re.sub(r"^-{3,}\s*$", "", cleaned, flags=re.MULTILINE)
+        cleaned = re.sub(r"^\s*[-*+]\s+", "- ", cleaned, flags=re.MULTILINE)
+        cleaned = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", cleaned)
+        cleaned = re.sub(r"\s+\n", "\n", cleaned)
+        return cleaned.strip()
 
     @staticmethod
     def process_chat_stream(user: User, user_message: str, platform_code: str | None = None):
