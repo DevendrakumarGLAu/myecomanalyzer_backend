@@ -17,8 +17,10 @@ class CaptchaService:
     CODE_LENGTH = 6
     EXPIRE_MINUTES = 5
     MAX_ATTEMPTS = 5
-    IMAGE_WIDTH = 180
+    IMAGE_WIDTH = 240
     IMAGE_HEIGHT = 70
+    RIGHT_MARGIN = 12
+    LEFT_MARGIN = 10
 
     @classmethod
     def _generate_code(cls) -> str:
@@ -41,14 +43,45 @@ class CaptchaService:
         draw = ImageDraw.Draw(image)
 
         try:
-            font = ImageFont.load_default()
+            # Try to load a system font with larger size for better readability
+            font_paths = [
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",  # Linux
+                "/System/Library/Fonts/Arial.ttf",  # macOS
+                "C:\\Windows\\Fonts\\arial.ttf",  # Windows
+                "/Library/Fonts/Arial.ttf",  # macOS alternative
+            ]
+            font = None
+            for font_path in font_paths:
+                try:
+                    font = ImageFont.truetype(font_path, 36)  # Larger font size
+                    break
+                except (OSError, IOError):
+                    continue
+
+            # Fallback to default font if system fonts not available
+            if font is None:
+                font = ImageFont.load_default()
+
         except Exception:
             font = None
 
+        # for index, char in enumerate(code):
+        #     x = 8 + index * 32 + random.randint(-3, 3)  # Increased spacing for larger font
+        #     y = 8 + random.randint(-3, 3)  # Adjusted vertical positioning
+        #     draw.text((x, y), char, fill=(0, 0, 0), font=font)
+        x_cursor = 10
         for index, char in enumerate(code):
-            x = 12 + index * 24 + random.randint(-2, 2)
-            y = 12 + random.randint(-5, 5)
+            # get exact bbox of character
+            bbox = draw.textbbox((0, 0), char, font=font)
+            char_width = bbox[2] - bbox[0]
+            char_height = bbox[3] - bbox[1]
+
+            x = x_cursor + random.randint(-2, 2)
+            y = (cls.IMAGE_HEIGHT - char_height) // 2 + random.randint(-3, 3)
+
             draw.text((x, y), char, fill=(0, 0, 0), font=font)
+            # advance cursor based on real width
+            x_cursor += char_width + 10
 
         for _ in range(6):
             start = (
