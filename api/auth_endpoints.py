@@ -6,7 +6,8 @@ import logging
 from typing import Optional
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, Header, Cookie, Response
+# from fastapi import APIRouter, HTTPException, Header, Cookie, Response
+from fastapi import APIRouter, HTTPException, Header, Cookie, Response, Request
 from pydantic import BaseModel, EmailStr, Field, validator
 from django.contrib.auth.models import User
 from django.contrib.auth.hashers import check_password
@@ -14,6 +15,7 @@ from django.utils import timezone
 from django.db import transaction
 
 from api.token_manager import TokenManager, TokenRotationManager
+from api.captcha_service import CaptchaService
 from api.auth_utils import (
     PasswordValidator,
     RateLimiter,
@@ -31,9 +33,11 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 # ======================== REQUEST SCHEMAS ========================
 class LoginRequest(BaseModel):
-    """Login request with email and password"""
+    """Login request with email, password, and captcha validation."""
     email: EmailStr
     password: str = Field(..., min_length=1)
+    captcha_id: str = Field(..., min_length=1)
+    captcha_answer: str = Field(..., min_length=1)
     device_id: Optional[str] = None
     remember_me: bool = False
 
@@ -41,6 +45,12 @@ class LoginRequest(BaseModel):
     def password_not_empty(cls, v):
         if not v or v.isspace():
             raise ValueError("Password cannot be empty")
+        return v
+
+    @validator("captcha_answer")
+    def captcha_answer_not_empty(cls, v):
+        if not v or v.isspace():
+            raise ValueError("Captcha answer cannot be empty")
         return v
 
 
@@ -75,6 +85,33 @@ class RefreshTokenRequest(BaseModel):
 class LogoutRequest(BaseModel):
     """Logout request"""
     refresh_token: Optional[str] = None
+
+
+class CaptchaGenerateResponse(BaseModel):
+    captcha_id: str
+    captcha_image: str
+    expires_in: int
+
+
+class CaptchaVerifyRequest(BaseModel):
+    captcha_id: str
+    answer: str = Field(..., min_length=1)
+
+
+class CaptchaVerifyResponse(BaseModel):
+    captcha_id: str
+    verified: bool
+    expires_in: int
+
+
+class CaptchaValidateRequest(BaseModel):
+    captcha_id: str
+
+
+class CaptchaValidateResponse(BaseModel):
+    captcha_id: str
+    valid: bool
+    expires_in: int
 
 
 # ======================== RESPONSE SCHEMAS ========================
@@ -141,7 +178,7 @@ def _store_refresh_token_in_cookie(
 
 # ======================== ENDPOINTS ========================
 @router.post("/signup", response_model=TokenResponse)
-async def signup(req: SignupRequest, request) -> TokenResponse:
+def signup(req: SignupRequest,  request: Request) -> TokenResponse:
     """
     Register new user and return access + refresh tokens.
     
@@ -238,7 +275,7 @@ async def signup(req: SignupRequest, request) -> TokenResponse:
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(req: LoginRequest, request) -> TokenResponse:
+def login(req: LoginRequest, request:Request) -> TokenResponse:
     """
     Authenticate user and return access + refresh tokens.
     
@@ -262,7 +299,22 @@ async def login(req: LoginRequest, request) -> TokenResponse:
         if not allowed:
             raise HTTPException(status_code=429, detail=error)
 
-        # Generic error for security
+        if not req.captcha_id or not req.captcha_answer:
+            raise HTTPException(status_code=401, detail=UserEnumerationProtection.get_generic_error())
+
+        with transaction.atomic():
+            captcha_valid, _ = CaptchaService.verify_captcha(req.captcha_id, req.captcha_answer)
+            if not captcha_valid:
+                security_logger.warning(
+                    f"Invalid captcha for login attempt: {req.email} from {ip_address} challenge={req.captcha_id}"
+                )
+                BruteForceProtection.log_failed_attempt(
+                    req.email, ip_address, user_agent, "invalid_captcha"
+                )
+                raise HTTPException(status_code=401, detail="Invalid or expired captcha")
+
+            CaptchaService.mark_captcha_used(req.captcha_id)
+
         generic_error = HTTPException(
             status_code=401,
             detail=UserEnumerationProtection.get_generic_error()
@@ -270,9 +322,12 @@ async def login(req: LoginRequest, request) -> TokenResponse:
 
         # Find user by email
         try:
-            user_profile = UserProfile.objects.select_related("user").get(email=req.email)
+            user_profile = UserProfile.objects.select_related("user").get(email__iexact=req.email)
             user = user_profile.user
         except UserProfile.DoesNotExist:
+            security_logger.warning(
+                f"Invalid email for login attempt: {req.email} from {ip_address}"
+            )
             BruteForceProtection.log_failed_attempt(
                 req.email, ip_address, user_agent, "invalid_email"
             )
@@ -297,6 +352,9 @@ async def login(req: LoginRequest, request) -> TokenResponse:
 
         # Verify password (constant-time comparison)
         if not check_password(req.password, user.password):
+            security_logger.warning(
+                f"Invalid credentials for login attempt: {req.email} from {ip_address}"
+            )
             BruteForceProtection.log_failed_attempt(
                 req.email, ip_address, user_agent, "invalid_creds"
             )
@@ -366,8 +424,36 @@ async def login(req: LoginRequest, request) -> TokenResponse:
         raise HTTPException(status_code=500, detail="Login failed")
 
 
+@router.post("/captcha/generate", response_model=CaptchaGenerateResponse)
+# async def generate_captcha(request) -> CaptchaGenerateResponse:
+def generate_captcha(request: Request) -> CaptchaGenerateResponse:
+    """Generate a new captcha challenge and return the image as a base64 string."""
+    ip_address = _get_client_ip(request)
+    result = CaptchaService.generate_captcha(ip_address=ip_address)
+    return CaptchaGenerateResponse(**result)
+
+
+@router.post("/captcha/verify", response_model=CaptchaVerifyResponse)
+def verify_captcha(req: CaptchaVerifyRequest) -> CaptchaVerifyResponse:
+    """Verify the captcha answer for a given challenge ID."""
+    valid, expires_in = CaptchaService.verify_captcha(req.captcha_id, req.answer)
+    if not valid:
+        raise HTTPException(status_code=401, detail="Invalid or expired captcha")
+    return CaptchaVerifyResponse(captcha_id=req.captcha_id, verified=True, expires_in=expires_in)
+
+
+@router.post("/captcha/validate", response_model=CaptchaValidateResponse)
+def validate_captcha(req: CaptchaValidateRequest) -> CaptchaValidateResponse:
+    """Validate that a previously generated captcha challenge is still valid."""
+    valid = CaptchaService.validate_captcha(req.captcha_id)
+    if not valid:
+        raise HTTPException(status_code=401, detail="Captcha challenge is not valid")
+    expires_in = CaptchaService.get_captcha_ttl(req.captcha_id)
+    return CaptchaValidateResponse(captcha_id=req.captcha_id, valid=True, expires_in=expires_in)
+
+
 @router.post("/refresh", response_model=SimpleTokenResponse)
-async def refresh(req: RefreshTokenRequest, request) -> SimpleTokenResponse:
+def refresh(req: RefreshTokenRequest, request: Request) -> SimpleTokenResponse:
     """
     Rotate refresh token and return new access token.
     
@@ -434,9 +520,9 @@ async def refresh(req: RefreshTokenRequest, request) -> SimpleTokenResponse:
 
 
 @router.post("/logout", response_model=SuccessResponse)
-async def logout(
+def logout(
     req: LogoutRequest,
-    request,
+    request: Request,
     authorization: Optional[str] = Header(None),
 ) -> SuccessResponse:
     """
@@ -484,6 +570,6 @@ async def logout(
 
 
 @router.get("/health")
-async def health_check():
+def health_check():
     """Health check endpoint"""
     return {"status": "healthy", "timestamp": str(datetime.now())}

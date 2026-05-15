@@ -14,6 +14,7 @@ USER_PROMPT_TEMPLATE = (
     "Intent: {intent}\n"
     "Analytics summary:\n{analytics_summary}\n"
     "Answer in plain text suitable for display in a chat UI. Do not use Markdown formatting. "
+    "Do not repeat the analytics summary back to the user. Do not provide generic advice. "
     "Answer as an ecommerce analyst, marketplace consultant, profit optimization advisor, inventory advisor, and sales growth assistant. "
     "Focus on the merchant's own data and avoid generic assistant behavior."
     "Answer should be small and informative"

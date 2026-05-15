@@ -1,6 +1,8 @@
 """
 Auth Models for secure token management, session control, and abuse protection.
 """
+import uuid
+
 from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
@@ -150,6 +152,40 @@ class AccountLock(models.Model):
     def unlock(self):
         """Unlock the account"""
         self.delete()
+
+
+class CaptchaChallenge(models.Model):
+    """Store captcha challenges for pre-login validation."""
+    challenge_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    code_hash = models.CharField(max_length=128)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    attempts = models.IntegerField(default=0)
+    verified = models.BooleanField(default=False)
+    used = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = "captcha_challenges"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["expires_at"]),
+            models.Index(fields=["ip_address"]),
+        ]
+
+    def __str__(self):
+        return f"CaptchaChallenge {self.challenge_id} expires {self.expires_at}"
+
+    def is_expired(self):
+        return timezone.now() > self.expires_at
+
+    def mark_verified(self):
+        self.verified = True
+        self.save(update_fields=["verified"])
+
+    def mark_used(self):
+        self.used = True
+        self.save(update_fields=["used"])
 
 
 class SessionLog(models.Model):
