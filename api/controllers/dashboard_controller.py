@@ -82,11 +82,11 @@ class DashboardController:
 
             # Apply date filters
             if date_from_obj:
-                order_filter["marketplace_order__order_date__gte"] = date_from_obj
+               # order_filter["marketplace_order__order_date__gte"] = date_from_obj
                 marketplace_filter["order_date__gte"] = date_from_obj
             
             if date_to_obj:
-                order_filter["marketplace_order__order_date__lte"] = date_from_obj
+                #order_filter["marketplace_order__order_date__lte"] = date_from_obj
                 marketplace_filter["order_date__lte"] = date_to_obj
 
             # Apply order status filter
@@ -275,13 +275,13 @@ class DashboardController:
             orders_by_status_query = Order.objects.filter(**order_filter)
             
             # Apply marketplace filters
-            #if date_from_obj or date_to_obj:
-               # date_filters = {}
-                #if date_from_obj:
-                   # date_filters["marketplace_order__order_date__gte"] = date_from_obj
-                #if date_to_obj:
-                   # date_filters["marketplace_order__order_date__lte"] = date_to_obj
-             #   orders_by_status_query = orders_by_status_query.filter(**date_filters)
+            if date_from_obj or date_to_obj:
+                date_filters = {}
+                if date_from_obj:
+                    date_filters["marketplace_order__order_date__gte"] = date_from_obj
+                if date_to_obj:
+                    date_filters["marketplace_order__order_date__lte"] = date_to_obj
+                orders_by_status_query = orders_by_status_query.filter(**date_filters)
             
             orders_by_status = list(
                 orders_by_status_query
@@ -334,13 +334,13 @@ class DashboardController:
             delivery_partner_stats_query = Order.objects.filter(**order_filter)
             
             # Apply marketplace filters
-            #if date_from_obj or date_to_obj:
-              #  date_filters = {}
-               # if date_from_obj:
-                  #  date_filters["marketplace_order__order_date__gte"] = date_from_obj
-              #  if date_to_obj:
-                  #  date_filters["marketplace_order__order_date__lte"] = date_to_obj
-               # delivery_partner_stats_query = delivery_partner_stats_query.filter(**date_filters)
+            if date_from_obj or date_to_obj:
+                date_filters = {}
+                if date_from_obj:
+                    date_filters["marketplace_order__order_date__gte"] = date_from_obj
+                if date_to_obj:
+                    date_filters["marketplace_order__order_date__lte"] = date_to_obj
+                delivery_partner_stats_query = delivery_partner_stats_query.filter(**date_filters)
             
             delivery_partner_stats = list(
                 delivery_partner_stats_query
