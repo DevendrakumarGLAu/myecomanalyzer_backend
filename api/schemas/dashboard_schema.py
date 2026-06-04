@@ -36,6 +36,8 @@ class DeliveryPartnerStat(BaseModel):
     cancelled: int
     customer_return: int
     ready_to_ship: int
+    exchange: int
+    lost: int
 
 
 class DashboardResponse(BaseModel):

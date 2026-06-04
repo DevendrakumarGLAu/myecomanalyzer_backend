@@ -7,7 +7,7 @@ from products.models import Product, ProductVariant
 from payments.models import OrderSettlement
 from marketplace.models import MarketplaceOrder
 from platforms.models import Platform
-
+from django.db.models import OuterRef, Subquery, Exists
 
 class DashboardController:
 
@@ -332,6 +332,14 @@ class DashboardController:
             # DELIVERY PARTNER STATS (OPTIMIZED)
             # ----------------------------
             delivery_partner_stats_query = Order.objects.filter(**order_filter)
+            rto_subquery = OrderSettlement.objects.filter(
+                order=OuterRef('pk'),
+                is_rto=True
+            )
+            return_subquery = OrderSettlement.objects.filter(
+                order=OuterRef('pk'),
+                is_return=True
+            )
             
             # Apply marketplace filters
             if date_from_obj or date_to_obj:
@@ -342,23 +350,51 @@ class DashboardController:
                     date_filters["marketplace_order__order_date__lte"] = date_to_obj
                 delivery_partner_stats_query = delivery_partner_stats_query.filter(**date_filters)
             
-            delivery_partner_stats = list(
-                delivery_partner_stats_query
-                .select_related("delivery_partner", "status")
-                .values("delivery_partner__name")
-                .annotate(
-                    total_orders=Count("id"),
-                    delivered=Count("id", filter=Q(status__code="DELIVERED")),
-                    rto=Count("id", filter=Q(status__code="RTO_COMPLETE")),
-                    cancelled=Count("id", filter=Q(status__code="CANCELLED")),
-                    customer_return=Count("id", filter=Q(status__code="DOOR_STEP_EXCHANGED")),
-                    ready_to_ship=Count("id", filter=Q(status__code="READY_TO_SHIP")),
-                )
+            delivery_partner_stats = delivery_partner_stats_query.annotate(
+                rto_count=Exists(rto_subquery),
+                customer_return_count=Exists(return_subquery)
+            ).values("delivery_partner__name").annotate(
+                total_orders=Count("id"),
+                delivered=Count("id", filter=Q(status__code="DELIVERED")),
+                rto=Count("id", filter=Q(rto_count=True)),
+                cancelled=Count("id", filter=Q(status__code="CANCELLED")),
+                customer_return=Count("id", filter=Q(customer_return_count=True)),
+                ready_to_ship=Count("id", filter=Q(status__code="READY_TO_SHIP")),
+                exchange=Count("id", filter=Q(status__code="DOOR_STEP_EXCHANGED")),
+                lost=Count("id", filter=Q(status__code="LOST")),
             )
 
+            stats_list = [
+                    {
+                        "partner": x.get("delivery_partner__name") or "Unknown",
+                        "total_orders": x["total_orders"],
+                        "delivered": x["delivered"],
+                        "rto": x["rto"],
+                        "cancelled": x["cancelled"],
+                        "customer_return": x["customer_return"],
+                        "ready_to_ship": x["ready_to_ship"],
+                        "exchange": x["exchange"],
+                        "lost": x["lost"],
+                    }
+                    for x in delivery_partner_stats
+                ]
+            if stats_list:
+                total_row = {
+                    "partner": "TOTAL",
+                    "total_orders": sum(x["total_orders"] for x in stats_list),
+                    "delivered": sum(x["delivered"] for x in stats_list),
+                    "rto": sum(x["rto"] for x in stats_list),
+                    "cancelled": sum(x["cancelled"] for x in stats_list),
+                    "customer_return": sum(x["customer_return"] for x in stats_list),
+                    "ready_to_ship": sum(x["ready_to_ship"] for x in stats_list),
+                    "exchange": sum(x["exchange"] for x in stats_list),
+                    "lost": sum(x["lost"] for x in stats_list),
+                }
+                stats_list.append(total_row)
             # ----------------------------
             # RESPONSE
             # ----------------------------
+            
             return {
                 "summary": {
                     "total_orders": total_orders,
@@ -382,18 +418,20 @@ class DashboardController:
                     {"date": str(x["order_date"]), "total_orders": x["total_orders"]}
                     for x in sales_trend
                 ],
-                "delivery_partner_stats": [
-                    {
-                        "partner": x.get("delivery_partner__name") or "Unknown",
-                        "total_orders": x["total_orders"],
-                        "delivered": x["delivered"],
-                        "rto": x["rto"],
-                        "cancelled": x["cancelled"],
-                        "customer_return": x["customer_return"],
-                        "ready_to_ship": x["ready_to_ship"],
-                    }
-                    for x in delivery_partner_stats
-                ]
+                
+                "delivery_partner_stats": stats_list,
+                # "delivery_partner_stats": [
+                #     {
+                #         "partner": x.get("delivery_partner__name") or "Unknown",
+                #         "total_orders": x["total_orders"],
+                #         "delivered": x["delivered"],
+                #         "rto": x["rto"],
+                #         "cancelled": x["cancelled"],
+                #         "customer_return": x["customer_return"],
+                #         "ready_to_ship": x["ready_to_ship"],
+                #     }
+                #     for x in delivery_partner_stats
+                # ]
             }
 
         except Exception as e:
@@ -416,6 +454,7 @@ class DashboardController:
                 "delivery_partner_stats": []
             }
 
+    
     @staticmethod
     def get_notifications(current_user=None, platform_code: str = None):
         try:
