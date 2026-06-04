@@ -82,9 +82,11 @@ class DashboardController:
 
             # Apply date filters
             if date_from_obj:
+               # order_filter["marketplace_order__order_date__gte"] = date_from_obj
                 marketplace_filter["order_date__gte"] = date_from_obj
             
             if date_to_obj:
+                #order_filter["marketplace_order__order_date__lte"] = date_from_obj
                 marketplace_filter["order_date__lte"] = date_to_obj
 
             # Apply order status filter
