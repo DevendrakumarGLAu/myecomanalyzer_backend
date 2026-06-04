@@ -241,16 +241,29 @@ class ProductController:
                         incoming_ids.append(variant_id)
                     else:
                         # Create new variant
-                        new_variant = ProductVariant.objects.update_or_create(
+                        # new_variant = ProductVariant.objects.update_or_create(
+                        #     product=product,
+                        #     sku=variant_data.sku,
+                        #     size=variant_data.size,
+                        #     color=variant_data.color,
+                        #     cost_price=variant_data.cost_price,
+                        #     selling_price=variant_data.selling_price,
+                        #     stock=variant_data.stock,
+                        #     shipping_cost=variant_data.shipping_cost or 0.0,
+                        #     rto_cost=variant_data.rto_cost or 0.0
+                        # )
+                        ProductVariant.objects.update_or_create(
                             product=product,
                             sku=variant_data.sku,
                             size=variant_data.size,
                             color=variant_data.color,
-                            cost_price=variant_data.cost_price,
-                            selling_price=variant_data.selling_price,
-                            stock=variant_data.stock,
-                            shipping_cost=variant_data.shipping_cost or 0.0,
-                            rto_cost=variant_data.rto_cost or 0.0
+                            defaults={
+                                "cost_price": variant_data.cost_price,
+                                "selling_price": variant_data.selling_price,
+                                "stock": variant_data.stock,
+                                "shipping_cost": variant_data.shipping_cost or 0,
+                                "rto_cost": variant_data.rto_cost or 0,
+                            }
                         )
 
             # Prefetch variants for response

@@ -32,6 +32,8 @@ def login(credentials: LoginRequest):
     """
     # Lookup username from UserProfile by email
     try:
+        # import pdb
+        # pdb.set_trace()
         profile = UserProfile.objects.filter(email__iexact=credentials.email).first()
         if not profile:
             raise HTTPException(status_code=401, detail="Invalid email or password")

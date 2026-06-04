@@ -361,11 +361,11 @@ class DashboardController:
                 "summary": {
                     "total_orders": total_orders,
                     "total_products": total_products,
-                    "total_sales": total_sales,
-                    "total_returns": total_returns,
-                    "total_settlement": total_settlement,
-                    "total_claims": total_claims,
-                    "total_profit": total_profit,
+                    "total_sales": round(total_sales, 2),
+                    "total_returns": round(total_returns, 2),
+                    "total_settlement": round(total_settlement, 2),
+                    "total_claims": round(total_claims, 2),
+                    "total_profit": round(total_profit, 2),
                     "low_stock_products": low_stock_products
                 },
                 "orders_by_status": [
