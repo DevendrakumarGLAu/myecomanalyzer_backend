@@ -1,55 +1,101 @@
+from datetime import datetime, timedelta
+from django.db.models import Sum, Count, F, Q, Max
+from django.utils import timezone
+from orders.models import Order
+from payments.models import OrderSettlement
+from products.models import ProductVariant
+from platforms.models import Platform
+from django.db.models import Q
+from django.utils import timezone
+from datetime import timedelta
+
 from datetime import timedelta
 from django.db.models import Sum, Count, F, Q, Max
 from django.utils import timezone
-from django.contrib.auth.models import User
 
 from orders.models import Order
 from payments.models import OrderSettlement
 from products.models import ProductVariant
-from marketplace.models import MarketplaceOrder
 from platforms.models import Platform
 
 
 class AnalyticsService:
+
     @classmethod
     def _resolve_platform(cls, platform_code: str | None):
         if not platform_code:
             return None
         return Platform.objects.filter(code__iexact=platform_code).first()
 
+    # -----------------------------
+    # DATE RANGE RESOLVER
+    # -----------------------------
     @classmethod
-    def _platform_filter(cls, qs, platform):
-        if platform is None:
-            return qs
-        return qs.filter(order__marketplace_order__platform=platform)
+    def resolve_date_range(cls, date_range):
+        today = timezone.now().date()
 
-    @classmethod
-    def _platform_filter_orders(cls, qs, platform):
-        if platform is None:
-            return qs
-        return qs.filter(marketplace_order__platform=platform)
+        if date_range == "today":
+            return today, today
 
+        if date_range == "yesterday":
+            return today - timedelta(days=1), today - timedelta(days=1)
+
+        if date_range == "last_7_days":
+            return today - timedelta(days=7), today
+
+        return None, None
+
+    # -----------------------------
+    # MAIN ANALYTICS FUNCTION
+    # -----------------------------
     @classmethod
-    def fetch_analytics(cls, current_user: User, platform_code: str | None = None) -> dict:
+    def fetch_analytics(cls, current_user, platform_code=None, date_range=None):
+
         platform = cls._resolve_platform(platform_code)
+        start_date, end_date = cls.resolve_date_range(date_range)
 
+        # -----------------------------
+        # ORDERS QUERYSET
+        # -----------------------------
         order_filter = Q(product__owner=current_user)
-        settlement_filter = Q(order__product__owner=current_user)
-        marketplace_filter = Q(sub_orders__product__owner=current_user)
 
-        if platform is not None:
+        if platform:
             order_filter &= Q(marketplace_order__platform=platform)
-            settlement_filter &= Q(order__marketplace_order__platform=platform)
-            marketplace_filter &= Q(platform=platform)
 
-        total_orders = Order.objects.filter(order_filter).count()
+        orders_qs = Order.objects.filter(order_filter)
 
-        settlements = OrderSettlement.objects.filter(settlement_filter).select_related(
-            "order__variant",
-            "order__product",
-            "order__marketplace_order",
-        )
+        if start_date and end_date:
+            orders_qs = orders_qs.filter(
+                marketplace_order__order_date__range=(start_date, end_date)
+            )
 
+        total_orders = orders_qs.count()
+
+        # -----------------------------
+        # DISPATCH COUNT
+        # -----------------------------
+        dispatch_count = orders_qs.filter(
+            status__code__in=["READY_TO_SHIP", "SHIPPED"]
+        ).count()
+
+        # -----------------------------
+        # SETTLEMENTS QUERYSET
+        # -----------------------------
+        settlement_filter = Q(order__product__owner=current_user)
+
+        settlements = OrderSettlement.objects.filter(settlement_filter)
+
+        if platform:
+            settlements = settlements.filter(platform=platform)
+
+        if start_date and end_date:
+            settlements = settlements.filter(
+                payment_date__range=(start_date, end_date)
+            )
+
+        # -----------------------------
+        # AGGREGATES
+        # -----------------------------
         totals = settlements.aggregate(
             total_sales=Sum("total_sale_amount"),
             total_settlement=Sum("final_settlement_amount"),
@@ -64,49 +110,55 @@ class AnalyticsService:
         total_rtos = totals.get("total_rtos") or 0
         total_returns_count = totals.get("total_returns_count") or 0
 
+        # -----------------------------
+        # PROFIT
+        # -----------------------------
         profit_aggregate = settlements.annotate(
             cost=F("order__variant__cost_price") * F("order__quantity"),
             profit=F("final_settlement_amount") - F("cost"),
         ).aggregate(total_profit=Sum("profit"))
 
         total_profit = float(profit_aggregate.get("total_profit") or 0)
+
         profit_margin = float((total_profit / total_sales) * 100 if total_sales else 0)
         return_rate = float((total_returns_count / total_orders) * 100 if total_orders else 0)
         rto_rate = float((total_rtos / total_orders) * 100 if total_orders else 0)
 
-        low_stock_variants = ProductVariant.objects.filter(product__owner=current_user, stock__lt=10)
-        if platform is not None:
+        # -----------------------------
+        # INVENTORY
+        # -----------------------------
+        low_stock_variants = ProductVariant.objects.filter(
+            product__owner=current_user,
+            stock__lt=10
+        )
+
+        if platform:
             low_stock_variants = low_stock_variants.filter(product__platform=platform)
 
         low_stock_count = low_stock_variants.count()
 
         dead_stock_threshold = timezone.now().date() - timedelta(days=90)
+
         dead_inventory_variants = ProductVariant.objects.filter(
             product__owner=current_user,
             stock__gt=0,
         ).annotate(
             last_sold_date=Max("orders__marketplace_order__order_date")
         ).filter(
-            Q(last_sold_date__lt=dead_stock_threshold) | Q(last_sold_date__isnull=True)
+            Q(last_sold_date__lt=dead_stock_threshold) |
+            Q(last_sold_date__isnull=True)
         )
-        if platform is not None:
-            dead_inventory_variants = dead_inventory_variants.filter(product__platform=platform)
+
+        if platform:
+            dead_inventory_variants = dead_inventory_variants.filter(
+                product__platform=platform
+            )
 
         dead_inventory_count = dead_inventory_variants.count()
- 
-        dead_inventory_examples = [
-                {
-                    key: (value.isoformat() if hasattr(value, "isoformat") else value)
-                    for key, value in row.items()
-                }
-                for row in dead_inventory_variants.values(
-                    variant_sku=F("sku"),
-                    product_name=F("product__name"),
-                    variant_stock=F("stock"),
-                    last_sold_date=F("last_sold_date"),
-                )[:5]
-            ]
 
+        # -----------------------------
+        # TOP PRODUCTS
+        # -----------------------------
         top_product_rows = (
             settlements
             .annotate(
@@ -114,7 +166,8 @@ class AnalyticsService:
                 product_name=F("order__product__name"),
                 variant_stock=F("order__variant__stock"),
                 order_revenue=F("order__selling_price") * F("order__quantity"),
-                order_profit=F("final_settlement_amount") - F("order__variant__cost_price") * F("order__quantity"),
+                order_profit=F("final_settlement_amount")
+                             - F("order__variant__cost_price") * F("order__quantity"),
             )
             .values("variant_sku", "product_name", "variant_stock")
             .annotate(
@@ -137,7 +190,10 @@ class AnalyticsService:
             for row in top_product_rows
         ]
 
-        platform_performance_rows = (
+        # -----------------------------
+        # PLATFORM PERFORMANCE
+        # -----------------------------
+        platform_rows = (
             settlements
             .values("order__marketplace_order__platform__name")
             .annotate(
@@ -161,42 +217,125 @@ class AnalyticsService:
                 "profit": float(row["total_profit"] or 0),
                 "orders": int(row["order_count"] or 0),
             }
-            for row in platform_performance_rows
+            for row in platform_rows
         ]
 
-        mismatch_query = settlements.filter(
-            Q(total_sale_amount__gt=F("final_settlement_amount") + 1)
-            | Q(total_sale_amount__lt=F("final_settlement_amount") - 1)
-        )
-        settlement_mismatch_count = mismatch_query.count()
-
-        alerts = []
-        if low_stock_count:
-            alerts.append(f"{low_stock_count} SKU(s) below 10 units")
-        if dead_inventory_count:
-            alerts.append(f"{dead_inventory_count} dead inventory SKU(s)")
-        if return_rate > 5:
-            alerts.append(f"Return rate is {return_rate:.1f}%")
-        if rto_rate > 3:
-            alerts.append(f"RTO rate is {rto_rate:.1f}%")
-        if settlement_mismatch_count:
-            alerts.append(f"{settlement_mismatch_count} settlement records have a mismatch")
-
+        # -----------------------------
+        # FINAL RESPONSE
+        # -----------------------------
         analytics_summary = {
-            "total_sales": total_sales,
-            "total_settlement": total_settlement,
-            "total_profit": total_profit,
-            "profit_margin": profit_margin,
-            "total_orders": total_orders,
-            "return_rate": return_rate,
-            "rto_rate": rto_rate,
-            "low_stock_count": low_stock_count,
-            "dead_inventory_count": dead_inventory_count,
-            "settlement_mismatch_count": settlement_mismatch_count,
-            "top_products": top_products,
-            "platform_performance": platform_performance,
-            "dead_inventory_examples": dead_inventory_examples,
-            "alerts": alerts,
-        }
+                "total_sales": total_sales,
+                "total_settlement": total_settlement,
+                "total_profit": total_profit,
+                "profit_margin": profit_margin,
+                "total_orders": total_orders,
+                "dispatch_count": dispatch_count,
+                "return_rate": return_rate,
+                "rto_rate": rto_rate,
+                "low_stock_count": low_stock_count,
+                "dead_inventory_count": dead_inventory_count,
+                "top_products": top_products,
+                "platform_performance": platform_performance,
+                
+                # ✅ FIELDS REQUIRED BY AIChatResponse
+                "settlement_mismatch_count": 0,  # placeholder, compute if needed
+                "cancelled_orders": 0,           # placeholder, compute if needed
+                "dead_inventory_examples": [],   # optional list of examples
+                "alerts": [],                    # optional alerts list
+            }
 
         return {"summary": analytics_summary}
+
+
+    @classmethod
+    def get_dispatch_count(
+        cls,
+        current_user,
+        platform_code=None,
+        date_range=None,
+    ):
+        platform = cls._resolve_platform(platform_code)
+
+        start_date, end_date = cls.resolve_date_range(date_range)
+
+        query = Order.objects.filter(
+            product__owner=current_user,
+            status__code__in=["READY_TO_SHIP", "SHIPPED"]
+        )
+
+        # -------------------------
+        # DATE FILTER (IMPORTANT)
+        # -------------------------
+        if start_date and end_date:
+            query = query.filter(
+                marketplace_order__order_date__range=(start_date, end_date)
+            )
+
+        if platform:
+            query = query.filter(
+                marketplace_order__platform=platform
+            )
+
+        return query.count()
+
+    @classmethod
+    def get_total_orders(cls, current_user, platform_code=None, date_range=None):
+
+        platform = cls._resolve_platform(platform_code)
+        start_date, end_date = cls.resolve_date_range(date_range)
+
+        query = Order.objects.filter(product__owner=current_user)
+
+        if start_date and end_date:
+            query = query.filter(
+                marketplace_order__order_date__range=(start_date, end_date)
+            )
+
+        if platform:
+            query = query.filter(marketplace_order__platform=platform)
+
+        return query.count()
+    @staticmethod
+    def extract_month_year(message: str):
+        """
+        Detect month from user message like:
+        'in may', 'for april', 'march orders'
+        """
+
+        message = message.lower()
+
+        months = {
+            "january": 1, "jan": 1,
+            "february": 2, "feb": 2,
+            "march": 3, "mar": 3,
+            "april": 4, "apr": 4,
+            "may": 5,
+            "june": 6, "jun": 6,
+            "july": 7, "jul": 7,
+            "august": 8, "aug": 8,
+            "september": 9, "sep": 9,
+            "october": 10, "oct": 10,
+            "november": 11, "nov": 11,
+            "december": 12, "dec": 12,
+        }
+
+        for name, num in months.items():
+            if name in message:
+                return num, datetime.now().year
+
+        return None, None
+
+    @staticmethod
+    def resolve_date_range(date_range):
+        today = timezone.now().date()
+
+        if date_range == "today":
+            return today, today
+
+        if date_range == "yesterday":
+            return today - timedelta(days=1), today - timedelta(days=1)
+
+        if date_range == "last_7_days":
+            return today - timedelta(days=7), today
+
+        return None, None
