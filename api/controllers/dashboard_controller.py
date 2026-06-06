@@ -7,7 +7,8 @@ from products.models import Product, ProductVariant
 from payments.models import OrderSettlement
 from marketplace.models import MarketplaceOrder
 from platforms.models import Platform
-from django.db.models import OuterRef, Subquery, Exists
+from django.db.models import OuterRef, Exists
+from django.db.models import F, DecimalField, ExpressionWrapper
 
 class DashboardController:
 
@@ -100,20 +101,49 @@ class DashboardController:
             # ----------------------------
             # TOTAL ORDERS (FAST)
             # ----------------------------
-            total_orders_query = Order.objects.filter(**order_filter)
+            # total_orders_query = Order.objects.filter(**order_filter)
+            # ----------------------------
+            # TOTAL ORDERS
+            # ----------------------------
+            total_orders_filter = {
+                "product__owner": current_user
+            }
+
+            if platform_id:
+                total_orders_filter["marketplace_order__platform_id"] = platform_id
+
+            if date_from_obj:
+                total_orders_filter["marketplace_order__order_date__gte"] = date_from_obj
+
+            if date_to_obj:
+                total_orders_filter["marketplace_order__order_date__lte"] = date_to_obj
+
+            if order_status:
+                total_orders_filter["status__code__iexact"] = order_status
+
+            if delivery_partner:
+                total_orders_filter["delivery_partner__name__icontains"] = delivery_partner
+
+            total_orders_query = Order.objects.filter(**total_orders_filter)
             
             # Apply amount filters if provided
-            if min_order_amount is not None or max_order_amount is not None:
-                # Filter by selling_price (unit price) * quantity for order amount
-                if min_order_amount is not None:
-                    total_orders_query = total_orders_query.filter(
-                        Q(selling_price__gte=min_order_amount / 100)  # Approximate filter
-                    )
-                if max_order_amount is not None:
-                    total_orders_query = total_orders_query.filter(
-                        Q(selling_price__lte=max_order_amount / 100)  # Approximate filter
-                    )
-            
+            total_orders_query = total_orders_query.annotate(
+                order_amount=ExpressionWrapper(
+                    F("selling_price") * F("quantity"),
+                    output_field=DecimalField(max_digits=12, decimal_places=2)
+                )
+            )
+
+            if min_order_amount is not None:
+                total_orders_query = total_orders_query.filter(
+                    order_amount__gte=min_order_amount
+                )
+
+            if max_order_amount is not None:
+                total_orders_query = total_orders_query.filter(
+                    order_amount__lte=max_order_amount
+                )
+
             total_orders = total_orders_query.count()
 
             # ----------------------------
@@ -334,11 +364,10 @@ class DashboardController:
             delivery_partner_stats_query = Order.objects.filter(**order_filter)
             rto_subquery = OrderSettlement.objects.filter(
                 order=OuterRef('pk'),
-                is_rto=True
-            )
+                final_settlement_amount=0)
             return_subquery = OrderSettlement.objects.filter(
                 order=OuterRef('pk'),
-                is_return=True
+                final_settlement_amount__lt=0
             )
             
             # Apply marketplace filters
