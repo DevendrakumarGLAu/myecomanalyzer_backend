@@ -2,6 +2,8 @@ from django.db.models import Sum, Count, Q, F
 from datetime import timedelta, datetime
 from django.utils import timezone
 
+from api.ai.graph import state
+from api.controllers.state_analytics import StateAnalyticsController
 from orders.models import Order
 from products.models import Product, ProductVariant
 from payments.models import OrderSettlement
@@ -9,6 +11,7 @@ from marketplace.models import MarketplaceOrder
 from platforms.models import Platform
 from django.db.models import OuterRef, Exists
 from django.db.models import F, DecimalField, ExpressionWrapper
+from api.controllers.state_analytics import ( StateAnalyticsController )
 
 class DashboardController:
 
@@ -50,7 +53,8 @@ class DashboardController:
                         "orders_by_status": [],
                         "orders_by_platform": [],
                         "sales_trend": [],
-                        "delivery_partner_stats": []
+                        "delivery_partner_stats": [],
+                         "state_wise_analytics": []
                     }
 
             # ----------------------------
@@ -420,8 +424,14 @@ class DashboardController:
                     "lost": sum(x["lost"] for x in stats_list),
                 }
                 stats_list.append(total_row)
+                
+            # ------------------------
+            # state wise analytics
+            # ------------------------
+            # state_controller = StateAnalyticsController()
+            state_wise_analytics = StateAnalyticsController.get_state_wise_order_analytics(start_date=date_from, end_date=date_to, platform_id=platform_id, state=None)
             # ----------------------------
-            # RESPONSE
+            # RESPONS
             # ----------------------------
             
             return {
@@ -449,6 +459,7 @@ class DashboardController:
                 ],
                 
                 "delivery_partner_stats": stats_list,
+                "state_wise_analytics": state_wise_analytics
                 # "delivery_partner_stats": [
                 #     {
                 #         "partner": x.get("delivery_partner__name") or "Unknown",
@@ -480,7 +491,8 @@ class DashboardController:
                 "orders_by_status": [],
                 "orders_by_platform": [],
                 "sales_trend": [],
-                "delivery_partner_stats": []
+                "delivery_partner_stats": [],
+                 "state_wise_analytics": []
             }
 
     

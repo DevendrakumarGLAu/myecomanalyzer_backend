@@ -4,6 +4,7 @@ from io import BytesIO
 from fastapi import HTTPException
 from django.utils import timezone
 
+from api.controllers.profit_controller import ProfitCalculationService
 from api.excel_upload.platform_factory import SettlementPlatformFactory
 from orders.models import Order
 from payments.models import OrderSettlement
@@ -294,7 +295,12 @@ class SettlementUploadController:
                         "extra_data",
                     ],
                     batch_size=500
-                )
+                ) 
+                
+            # ----------------------------------------- # RECALCULATE PROFITS # ----------------------------------------- 
+            settlements = OrderSettlement.objects.filter( order__marketplace_sub_order_id__in=sub_orders ).select_related( "order", "order__variant", "order__product" ) 
+            for settlement in settlements:
+                ProfitCalculationService.calculate_order_profit( settlement.order, settlement )
 
             return {
                 "message": "Settlement uploaded successfully",
