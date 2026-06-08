@@ -46,3 +46,4 @@ class DashboardResponse(BaseModel):
     orders_by_platform: List[PlatformData]
     sales_trend: List[SalesTrend]
     delivery_partner_stats: List[DeliveryPartnerStat]
+    state_wise_analytics: List[dict]
