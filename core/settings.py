@@ -68,6 +68,7 @@ INSTALLED_APPS = [
     'notifications',
     'ai',
     'profit',
+    'adsSpend',
     
 ]
 

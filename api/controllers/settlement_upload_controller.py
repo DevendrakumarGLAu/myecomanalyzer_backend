@@ -4,6 +4,8 @@ from io import BytesIO
 from fastapi import HTTPException
 from django.utils import timezone
 
+from adsSpend.models import AdsSpend
+from adsSpend.models import AdsSpend
 from api.controllers.profit_controller import ProfitCalculationService
 from api.excel_upload.platform_factory import SettlementPlatformFactory
 from orders.models import Order
@@ -126,7 +128,111 @@ class SettlementUploadController:
             updated = []
             skipped = 0
             skipped_details = []
+            # ==========================================
+            # ADS COST SHEET
+            # ==========================================
+            ads_records = []
+            try:
+                df_ads = pd.read_excel(
+                    BytesIO(file_content),
+                    sheet_name="Ads Cost",
+                    header=1
+                )
 
+                df_ads.columns = (
+                    df_ads.columns
+                    .astype(str)
+                    .str.strip()
+                    .str.replace("\n", " ", regex=False)
+                )
+
+                print("ADS COLUMNS:", df_ads.columns.tolist())
+                print("ADS ROWS:", len(df_ads))
+
+                # Optional: remove old ads spend records for this platform
+                # AdsSpend.objects.filter(platform=platform_obj).delete()
+
+                for _, row in df_ads.iterrows():
+
+                    campaign_id = row.get("Campaign ID")
+
+                    if pd.isna(campaign_id):
+                        continue
+
+                    campaign_id = str(campaign_id).strip()
+
+                    if not campaign_id:
+                        continue
+
+                    deduction_duration = None
+                    deduction_date = None
+
+                    if pd.notna(row.get("Deduction Duration")):
+                        deduction_duration = pd.to_datetime(
+                            row.get("Deduction Duration"),
+                            errors="coerce"
+                        )
+
+                    if pd.notna(row.get("Deduction Date")):
+                        deduction_date = pd.to_datetime(
+                            row.get("Deduction Date"),
+                            errors="coerce"
+                        )
+
+                    ads_records.append(
+                        AdsSpend(
+                            platform=platform_obj,
+                            campaign_id=campaign_id,
+
+                            deduction_duration=deduction_duration,
+                            deduction_date=deduction_date,
+
+                            ad_cost=clean_number(
+                                row.get("Ad Cost")
+                            ),
+
+                            credits=clean_number(
+                                row.get("Credits / Waivers / Discounts")
+                            ),
+
+                            ad_cost_after_adjustment=clean_number(
+                                row.get(
+                                    "Ad Cost incl. Credits/Waivers/Discounts"
+                                )
+                            ),
+
+                            gst=clean_number(
+                                row.get("GST")
+                            ),
+
+                            total_ads_cost=abs(
+                                clean_number(
+                                    row.get("Total Ads Cost")
+                                )
+                            ),
+
+                            created_by=current_user
+                        )
+                    )
+
+                print("ADS RECORDS TO INSERT:", len(ads_records))
+
+                if ads_records:
+                    AdsSpend.objects.bulk_create(
+                        ads_records,
+                        batch_size=1000
+                    )
+
+                    print(
+                        f"SUCCESS: {len(ads_records)} AdsSpend records inserted"
+                    )
+
+            except Exception as e:
+                print("ADS COST ERROR:", str(e))
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Ads Cost Import Error: {str(e)}"
+                )
             for idx, row in df.iterrows():
                 sub_order = None
                 try:

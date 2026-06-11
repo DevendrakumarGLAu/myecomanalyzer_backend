@@ -2,6 +2,8 @@ from django.db.models import Sum, Count, Q, F
 from datetime import timedelta, datetime
 from django.utils import timezone
 
+from adsSpend.models import AdsSpend
+from adsSpend.models import AdsSpend
 from api.ai.graph import state
 from api.controllers.state_analytics import StateAnalyticsController
 from orders.models import Order
@@ -12,6 +14,7 @@ from platforms.models import Platform
 from django.db.models import OuterRef, Exists
 from django.db.models import F, DecimalField, ExpressionWrapper
 from api.controllers.state_analytics import ( StateAnalyticsController )
+from django.db.models.functions import TruncMonth
 
 class DashboardController:
 
@@ -48,6 +51,8 @@ class DashboardController:
                             "total_settlement": 0,
                             "total_claims": 0,
                             "total_profit": 0,
+                            "total_ads_spend": 0,
+                            "ads_trend": 0,
                             "low_stock_products": 0
                         },
                         "orders_by_status": [],
@@ -227,6 +232,50 @@ class DashboardController:
             total_returns = totals["total_returns"] or 0
             total_settlement = totals["total_settlement"] or 0
             total_claims = totals["total_claims"] or 0
+            
+            # ----------------------------
+            # ADS SPEND
+            # ----------------------------
+            ads_query = AdsSpend.objects.filter(
+                platform__isnull=False
+            )
+
+            if current_user:
+                ads_query = ads_query.filter(
+                    platform__products__owner=current_user
+                ).distinct()
+
+            if platform_id:
+                ads_query = ads_query.filter(
+                    platform_id=platform_id
+                )
+
+            # Month filter based on deduction_duration
+            if date_from_obj:
+                ads_query = ads_query.filter(
+                    deduction_duration__gte=date_from_obj
+                )
+
+            if date_to_obj:
+                ads_query = ads_query.filter(
+                    deduction_duration__lte=date_to_obj
+                )
+
+            ads_summary = ads_query.aggregate(
+                total_ads_spend=Sum("total_ads_cost")
+            )
+
+            total_ads_spend = ads_summary["total_ads_spend"] or 0
+            
+            ads_trend = list(
+                ads_query
+                .annotate(month=TruncMonth("deduction_duration"))
+                .values("month")
+                .annotate(
+                    total_spend=Sum("total_ads_cost")
+                )
+                .order_by("month")
+            )
 
             # ----------------------------
             # PROFIT CALCULATION
@@ -443,6 +492,14 @@ class DashboardController:
                     "total_settlement": round(total_settlement, 2),
                     "total_claims": round(total_claims, 2),
                     "total_profit": round(total_profit, 2),
+                    "total_ads_spend": round(total_ads_spend, 2),
+                    "ads_trend": [
+                                {
+                                    "month": x["month"].strftime("%Y-%m"),
+                                    "total_spend": float(x["total_spend"] or 0)
+                                }
+                                for x in ads_trend
+                            ],
                     "low_stock_products": low_stock_products
                 },
                 "orders_by_status": [
@@ -457,7 +514,6 @@ class DashboardController:
                     {"date": str(x["order_date"]), "total_orders": x["total_orders"]}
                     for x in sales_trend
                 ],
-                
                 "delivery_partner_stats": stats_list,
                 "state_wise_analytics": state_wise_analytics
                 # "delivery_partner_stats": [
@@ -486,6 +542,8 @@ class DashboardController:
                     "total_settlement": 0,
                     "total_claims": 0,
                     "total_profit": 0,
+                    "total_ads_spend": 0,
+                    "ads_trend": 0,
                     "low_stock_products": 0
                 },
                 "orders_by_status": [],
