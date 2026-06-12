@@ -1,6 +1,9 @@
 from pydantic import BaseModel
 from typing import List
 
+class AdsTrendData(BaseModel):
+    month: str
+    total_spend: float
 
 class DashboardSummary(BaseModel):
     total_orders: int
@@ -11,6 +14,8 @@ class DashboardSummary(BaseModel):
     low_stock_products: int
     total_claims: float
     total_profit:float
+    total_ads_spend: float
+    ads_trend: List[AdsTrendData]
 
 
 class StatusData(BaseModel):
