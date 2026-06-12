@@ -502,6 +502,7 @@ class DashboardController:
                             ],
                     "low_stock_products": low_stock_products
                 },
+                
                 "orders_by_status": [
                     {"status": x["status__label"], "total": x["total"]}
                     for x in orders_by_status

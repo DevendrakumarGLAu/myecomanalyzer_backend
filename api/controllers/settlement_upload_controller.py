@@ -138,6 +138,7 @@ class SettlementUploadController:
                     sheet_name="Ads Cost",
                     header=1
                 )
+                
 
                 df_ads.columns = (
                     df_ads.columns
