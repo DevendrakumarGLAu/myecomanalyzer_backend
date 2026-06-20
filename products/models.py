@@ -14,6 +14,8 @@ class Product(BaseModel):
     gst_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     commission_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     owner = models.ForeignKey(User, on_delete=models.CASCADE)
+    is_auto_created = models.BooleanField(default=False)
+    requires_manual_review = models.BooleanField(default=False)
 
     class Meta:
         db_table = "products"
@@ -37,6 +39,9 @@ class ProductVariant(models.Model):
 
     shipping_cost = models.FloatField(default=0)
     rto_cost = models.FloatField(default=0)
+    # NEW
+    is_auto_created = models.BooleanField(default=False)
+    requires_manual_review = models.BooleanField(default=False)
 
     class Meta:
         db_table = "product_variants"

@@ -1,12 +1,16 @@
 from typing import Optional
 from django.contrib.auth.models import User
 from api.controllers.pagination_controller import Pagination
+from customers.models import Customer
+from marketplace.models import MarketplaceOrder
+from orders.models import Order
+from payments.models import OrderSettlement
 from platforms.models import Platform
 from products.models import Product, ProductVariant, CostPriceUpdateHistory
 from fastapi import HTTPException
 from api.schemas.product_schema import ProductRequest, ProductResponse, ProductUpdateRequest, ProductVariantResponse
 from django.db.models import Q
-from django.db import transaction
+from django.db import connection, transaction
 
 class ProductController:
 
@@ -205,12 +209,12 @@ class ProductController:
                 platform_obj = Platform.objects.filter(code=update_data["platform_code"]).first()
                 product.platform = platform_obj
             product.updated_by = current_user
+            product.is_auto_created = False
+            product.requires_manual_review = False
             product.save()
 
             # --- Update Variants if provided ---
             if "variants" in update_data:
-                # Delete old variants
-                # product.variants.all().delete()
                 
                 existing_variants = {v.id: v for v in product.variants.all()}
                 incoming_variants = payload.variants or []
@@ -237,21 +241,11 @@ class ProductController:
                                 new_cost_price=variant_data.cost_price,
                                 updated_by=current_user
                             )
+                        variant.is_auto_created = False
+                        variant.requires_manual_review = False
                         variant.save()
                         incoming_ids.append(variant_id)
                     else:
-                        # Create new variant
-                        # new_variant = ProductVariant.objects.update_or_create(
-                        #     product=product,
-                        #     sku=variant_data.sku,
-                        #     size=variant_data.size,
-                        #     color=variant_data.color,
-                        #     cost_price=variant_data.cost_price,
-                        #     selling_price=variant_data.selling_price,
-                        #     stock=variant_data.stock,
-                        #     shipping_cost=variant_data.shipping_cost or 0.0,
-                        #     rto_cost=variant_data.rto_cost or 0.0
-                        # )
                         ProductVariant.objects.update_or_create(
                             product=product,
                             sku=variant_data.sku,
@@ -263,6 +257,8 @@ class ProductController:
                                 "stock": variant_data.stock,
                                 "shipping_cost": variant_data.shipping_cost or 0,
                                 "rto_cost": variant_data.rto_cost or 0,
+                                "is_auto_created": False,
+                                "requires_manual_review": False,
                             }
                         )
 
@@ -357,3 +353,35 @@ class ProductController:
                 for v in product.variants.all()
             ]
         )
+        
+    @staticmethod
+    def delete_product(product_id: int):
+        with transaction.atomic():
+            OrderSettlement.objects.filter(
+                order__product_id=product_id
+            ).delete()
+
+            Order.objects.filter(
+                product_id=product_id
+            ).delete()
+
+            ProductVariant.objects.filter(
+                product_id=product_id
+            ).delete()
+
+            Product.objects.filter(
+                id=product_id
+            ).delete()
+
+            MarketplaceOrder.objects.filter(
+                sub_orders__isnull=True
+            ).delete()
+
+            Customer.objects.filter(
+                marketplace_orders__isnull=True
+            ).delete()
+
+        return {
+            "success": True,
+            "message": "Deleted successfully"
+        }

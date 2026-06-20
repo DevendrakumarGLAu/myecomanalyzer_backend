@@ -38,3 +38,9 @@ class AdsSpend(models.Model):
 
     class Meta:
         db_table = "ads_spend"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["platform", "campaign_id", "deduction_duration"],
+                name="unique_ads_spend_entry"
+            )
+        ]

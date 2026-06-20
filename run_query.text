@@ -1,0 +1,34 @@
+INSERT INTO roles (
+    name,
+    description,
+    is_active,
+    created_at,
+    updated_at
+)
+VALUES
+('super_admin', 'System owner', true, NOW(), NOW()),
+('admin', 'Platform administrator', true, NOW(), NOW()),
+('support', 'Customer support team', true, NOW(), NOW()),
+('user', 'Normal application user', true, NOW(), NOW()),
+('partner', 'Business partner or affiliate', true, NOW(), NOW());
+
+
+INSERT INTO user_profile (
+    first_name,
+    last_name,
+    mobile_number,
+    email,
+    is_active,
+    created_at,
+    trial_start,
+    trial_end,
+    subscription_start,
+    subscription_end,
+    payment_verified,
+    user_id,
+    role_id
+)
+VALUES
+('devendra','kumar','7351864609','devendra1997kumar@gmail.com',true,NOW(),NOW(),NOW() + INTERVAL '7 days',NULL,NULL,false,1,1),
+('LOKENDRA','SINGH',NULL,'poonamphoto2188@gmail.com',true,NOW(),NOW(),NOW() + INTERVAL '7 days',NULL,NULL,false,2,5),
+('devendra','kumar 2','9874563210','testAdmin@gmail.com',true,NOW(),NOW(),NOW() + INTERVAL '7 days',NULL,NULL,false,3,5);

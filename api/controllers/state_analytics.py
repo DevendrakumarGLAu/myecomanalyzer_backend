@@ -4,7 +4,7 @@ from orders.models import Order
 
 class StateAnalyticsController:
     @staticmethod
-    def get_state_wise_order_analytics(start_date=None, end_date=None, platform_id=None,state=None):
+    def get_state_wise_order_analytics(start_date=None, end_date=None, platform_id=None,state=None, current_user=None):
 
         queryset = Order.objects.select_related(
             "marketplace_order",
@@ -37,7 +37,8 @@ class StateAnalyticsController:
             queryset = queryset.filter(
                 marketplace_order__customer__state__iexact=state
             )
-
+        if current_user:
+            queryset = queryset.filter(product__owner=current_user)
         # -----------------------------------
         # AGGREGATION
         # -----------------------------------
