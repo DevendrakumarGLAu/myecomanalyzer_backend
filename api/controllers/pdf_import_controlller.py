@@ -1,7 +1,9 @@
+from fastapi import logger
 import pdfplumber
 import re
 from datetime import datetime
 
+from categories.models import Category
 from customers.models import Customer
 from logistics.models import DeliveryPartner
 from platforms.models import Platform
@@ -14,7 +16,7 @@ from django.utils.dateparse import parse_date
 from io import StringIO
 import csv
 from datetime import datetime
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from orders.models import OrderStatus
 from functools import lru_cache
 from logistics.models import DeliveryPartner
@@ -194,6 +196,21 @@ class InvoiceExtractController:
                     data["size"] = size
                     data["color"] = color
                     data["quantity"] = quantity
+                    # Auto create/update product and variant from invoice
+                    product_description = InvoiceExtractController.extract_product_description(text)
+                    # print(f"Extracted product description: '{product_description}' from text: '{text}'")
+                    # print(product_description)
+                    InvoiceExtractController.get_or_create_product_from_invoice(
+                            owner=current_user,
+                            platform_code=platform_code,
+                            catalog_id=data.get("catalog_id"),
+                            description=product_description,
+                            sku=sku,
+                            size=size,
+                            color=color,
+                            selling_price=data["selling_price"],
+                            cost_price=0,
+                    )
                     try:
                         order_date = InvoiceExtractController.extract_order_date_from_text(
                             text, data["marketplace_sub_order_id"]
@@ -209,11 +226,23 @@ class InvoiceExtractController:
                         )
 
                     # 🔁 DUPLICATE CHECK
+                    # if Order.objects.filter(
+                    #     marketplace_sub_order_id=data["marketplace_sub_order_id"]
+                    # ).exists():
+                    #     duplicate_orders.append({
+                    #         "order_id": data["marketplace_sub_order_id"],
+                    #         "reason": "Order already exists"
+                    #     })
+                    #     continue
                     if Order.objects.filter(
                         marketplace_sub_order_id=data["marketplace_sub_order_id"]
                     ).exists():
                         duplicate_orders.append({
+                            "row": idx,
                             "order_id": data["marketplace_sub_order_id"],
+                            "sku": sku,
+                            "size": size,
+                            "color": color,
                             "reason": "Order already exists"
                         })
                         continue
@@ -925,3 +954,161 @@ class InvoiceExtractController:
             "order_id": order.marketplace_sub_order_id,
             "is_duplicate": False
         }
+    
+    
+    @staticmethod
+    def extract_product_description(text: str):
+        import re
+
+        # Get the Description section only
+        match = re.search(
+            r"Description\s+HSN\s+Qty\s+Gross Amount\s+Discount\s+Taxable Value\s+Taxes\s+Total(.*?)(?:Other Charges|Total\s+Rs\.)",
+            text,
+            re.DOTALL | re.IGNORECASE,
+        )
+
+        if not match:
+            return None
+
+        desc = match.group(1)
+
+        # Remove tax labels like SGST/CGST/IGST and their values
+        desc = re.sub(
+            r"(SGST|CGST|IGST)\s*@\s*[\d.]+%?\s*:?\s*Rs\.\d+\.\d+",
+            " ",
+            desc,
+            flags=re.IGNORECASE,
+        )
+
+        # Remove HSN code
+        desc = re.sub(r"\b7018\b", " ", desc)
+
+        # Remove quantity
+        desc = re.sub(r"\b1\b", " ", desc)
+
+        # Remove all monetary values
+        desc = re.sub(r"Rs\.\d+\.\d+", " ", desc)
+
+        # Remove trailing size like "- 2.4"
+        desc = re.sub(r"-\s*\d+(\.\d+)?\s*$", "", desc)
+
+        # Collapse whitespace
+        desc = re.sub(r"\s+", " ", desc).strip()
+
+        return desc
+    
+    @staticmethod
+    def normalize_product_name(name: str):
+        import re
+        if not name:
+            return ""
+
+        name = name.lower().strip()
+
+        # remove ending size like "- 2.4"
+        name = re.sub(r"\s*-\s*\d+(\.\d+)?$", "", name)
+
+        # remove multiple spaces
+        name = re.sub(r"\s+", " ", name)
+
+        return name
+    
+    @staticmethod
+    def get_or_create_product_from_invoice(
+        *,
+        owner,
+        platform_code,
+        catalog_id,
+        description,
+        sku,
+        size,
+        color,
+        selling_price,
+        cost_price=0,
+        gst_percent=0,
+        commission_percent=0,
+        shipping_cost=0,
+        rto_cost=0,
+    ):
+        import uuid
+
+        platform = Platform.objects.filter(
+            code__iexact=platform_code
+        ).first()
+
+        normalized_name = InvoiceExtractController.normalize_product_name(description)
+
+        product = None
+
+        # --------------------------------------------------
+        # 1. Find by catalog id (Meesho best practice)
+        # --------------------------------------------------
+        if catalog_id:
+            product = Product.objects.filter(
+                owner=owner,
+                catalog_id=catalog_id,
+            ).first()
+        catalog_value = catalog_id
+        if not catalog_value:
+            catalog_value = str(uuid.uuid4().int)[:9]
+
+        # 2. Find by normalized name
+        if not product and description:
+            normalized = InvoiceExtractController.normalize_product_name(description)
+            for p in Product.objects.filter(owner=owner, platform=platform):
+                if InvoiceExtractController.normalize_product_name(p.name) == normalized:
+                    product = p
+                    break
+        # 3. Find by existing variant
+        category = Category.objects.first()
+        color = color.strip().title() if color else ""
+        size = str(size).strip() if size else ""
+        if not product:
+            existing_variant = ProductVariant.objects.filter(
+                sku__iexact=sku,
+                size=size,
+                color__iexact=color,
+            ).select_related("product").first()
+
+            if existing_variant:
+                product = existing_variant.product
+
+    
+    
+        # 4. Create only if still not found
+        
+        if not product:
+            product = Product.objects.create(
+                catalog_id = catalog_value,
+                name=description,
+                category=category if category else None,
+                platform=platform,
+                owner=owner,
+                gst_percent=gst_percent,
+                commission_percent=commission_percent,
+                created_by=owner,
+                updated_by=owner,
+                is_auto_created=True,
+                requires_manual_review=True,
+            )
+
+        # --------------------------------------------------
+        # 4. Create or update variant
+        # --------------------------------------------------
+        ProductVariant.objects.update_or_create(
+                product=product,
+                sku=sku,
+                size=size,
+                color=color.upper(),
+                defaults={
+                    "selling_price": selling_price or 0,
+                    "cost_price": cost_price or 0,
+                    "stock": 10,
+                    "shipping_cost": shipping_cost or 150,
+                    "rto_cost": rto_cost or 10,
+                    "is_auto_created": True,
+                    "requires_manual_review": True,
+                },
+            )
+
+        return product

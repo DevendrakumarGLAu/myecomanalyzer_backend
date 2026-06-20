@@ -5,7 +5,6 @@ from fastapi import HTTPException
 from django.utils import timezone
 
 from adsSpend.models import AdsSpend
-from adsSpend.models import AdsSpend
 from api.controllers.profit_controller import ProfitCalculationService
 from api.excel_upload.platform_factory import SettlementPlatformFactory
 from orders.models import Order
@@ -219,14 +218,23 @@ class SettlementUploadController:
                 print("ADS RECORDS TO INSERT:", len(ads_records))
 
                 if ads_records:
-                    AdsSpend.objects.bulk_create(
-                        ads_records,
-                        batch_size=1000
-                    )
+                    existing_ads = AdsSpend.objects.filter(
+                    platform=platform_obj,
+                    campaign_id__in=[r.campaign_id for r in ads_records]
+                ).values("campaign_id", "deduction_duration")
 
-                    print(
-                        f"SUCCESS: {len(ads_records)} AdsSpend records inserted"
-                    )
+                existing_set = {
+                    (x["campaign_id"], x["deduction_duration"])
+                    for x in existing_ads
+                }
+
+                new_records = [
+                    r for r in ads_records
+                    if (r.campaign_id, r.deduction_duration.date() if r.deduction_duration else None)
+                    not in existing_set
+                ]
+
+                AdsSpend.objects.bulk_create(new_records, batch_size=1000)
 
             except Exception as e:
                 print("ADS COST ERROR:", str(e))

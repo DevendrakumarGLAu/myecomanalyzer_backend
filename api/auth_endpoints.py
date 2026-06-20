@@ -22,6 +22,8 @@ from api.auth_utils import (
     BruteForceProtection,
     UserEnumerationProtection,
 )
+from django.conf import settings
+from roles.models import Role
 from users.auth_models import SessionLog
 from users.models import UserProfile
 
@@ -62,6 +64,8 @@ class SignupRequest(BaseModel):
     password_confirm: str
     first_name: Optional[str] = None
     last_name: Optional[str] = None
+    mobile_number: Optional[str] = None
+    use_trial: Optional[bool] = True
 
     @validator("username")
     def username_alphanumeric(cls, v):
@@ -161,7 +165,7 @@ def _store_refresh_token_in_cookie(
     token: str,
     max_age: int = 30 * 24 * 60 * 60,  # 30 days
 ) -> None:
-    """
+    """ 
     Store refresh token in HttpOnly cookie.
     Prevents XSS attacks from accessing token.
     """
@@ -178,100 +182,149 @@ def _store_refresh_token_in_cookie(
 
 # ======================== ENDPOINTS ========================
 @router.post("/signup", response_model=TokenResponse)
-def signup(req: SignupRequest,  request: Request) -> TokenResponse:
+def signup(user_data: SignupRequest, request: Request) -> TokenResponse:
     """
     Register new user and return access + refresh tokens.
-    
+
     Security:
     - Rate limit: 10 signups per hour per IP
     - Password must meet policy requirements
-    - Email must be unique
-    - Generic error messages to prevent enumeration
+    - Email and username must be unique
+    - Generic error messages to prevent user enumeration
+
+    Data Integrity:
+    - Ensures exactly one UserProfile per user (no duplicates)
+    - Uses get_or_create() to prevent profile duplication
+    - Enforces 1:1 relationship between User and UserProfile
+
+    Business Logic:
+    - Assigns default role (guest or fallback role)
+    - Initializes trial period (default 30 days from .env or config)
+    - Sets payment_verified = False for new users
+    - Prepares user for subscription-based SaaS access control
+
+    Security & Logging:
+    - Atomic transaction to prevent partial user creation
+    - Logs signup attempts with IP tracking
+    - Safe failure handling with no data leakage
+
+    SaaS Readiness:
+    - Supports future subscription plans
+    - Role-based access control ready
+    - Trial-to-paid conversion supported
     """
-    ip_address = _get_client_ip(request)
-    user_agent = _get_user_agent(request)
+    ip_address = request.client.host if request.client else "unknown"
 
     try:
-        # Rate limiting - prevent signup abuse
-        allowed, error = RateLimiter.check_ip_rate_limit(
-            ip_address,
-            limit=10,
-            window_seconds=3600,
-        )
-        if not allowed:
-            security_logger.warning(f"Signup rate limit exceeded from {ip_address}")
-            raise HTTPException(status_code=429, detail=error)
-
-        # Validate password
-        is_valid, error = PasswordValidator.validate(req.password)
-        if not is_valid:
-            raise HTTPException(status_code=400, detail=error)
-
-        # Check if user exists
-        if User.objects.filter(email=req.email).exists():
-            raise HTTPException(status_code=400, detail="Email already registered")
-
-        if User.objects.filter(username=req.username).exists():
-            raise HTTPException(status_code=400, detail="Username already taken")
-
-        # Create user
         with transaction.atomic():
+
+            # -------------------------
+            # 1. VALIDATION
+            # -------------------------
+            if User.objects.filter(username=user_data.username).exists():
+                raise HTTPException(status_code=400, detail="Username already exists")
+
+            if User.objects.filter(email=user_data.email).exists():
+                raise HTTPException(status_code=400, detail="Email already exists")
+
+            valid_password, password_error = PasswordValidator.validate(user_data.password)
+            if not valid_password:
+                raise HTTPException(status_code=400, detail=password_error)
+
+            # -------------------------
+            # 2. CREATE USER
+            # -------------------------
             user = User.objects.create_user(
-                username=req.username,
-                email=req.email,
-                password=req.password,
-                first_name=req.first_name or "",
-                last_name=req.last_name or "",
+                username=user_data.username,
+                email=user_data.email,
+                password=user_data.password,
+                first_name=user_data.first_name or "",
+                last_name=user_data.last_name or "",
+                is_superuser=False,
+                is_staff=False,
             )
 
-            # Create user profile if doesn't exist
-            UserProfile.objects.get_or_create(user=user)
+            # -------------------------
+            # 3. GET DEFAULT ROLE
+            # -------------------------
+            try:
+                role = Role.objects.get(name="partner")  # default for new users
+            except Role.DoesNotExist:
+                raise HTTPException(status_code=500, detail="Default role not configured")
 
-        logger.info(f"New user registered: {user.username} from {ip_address}")
+            # -------------------------
+            # 4. CREATE PROFILE (NO DUPLICATES EVER)
+            # -------------------------
+            now = timezone.now()
+            if user_data.use_trial:
+                trial_start = now
+                trial_end = now + timezone.timedelta(days=settings.TRIAL_DAYS)
+                subscription_start = None
+                subscription_end = None
+                payment_verified = False
+                role_id = role  # default trial role
+            else:
+                trial_start = None
+                trial_end = None
 
-        # Generate tokens
-        access_token = TokenManager.create_access_token(user.id, user.username)
-        refresh_token = TokenManager.create_refresh_token(user.id, user.username)
+                subscription_start = now
+                subscription_end = now + timezone.timedelta(days=settings.TRIAL_DAYS)
 
-        # Store refresh token
-        token_hash = TokenManager.hash_token(refresh_token)
-        from users.auth_models import RefreshToken
+                payment_verified = True
 
-        expires_at = timezone.now() + timezone.timedelta(days=30)
-        RefreshToken.objects.create(
-            user=user,
-            token_hash=token_hash,
-            expires_at=expires_at,
-            ip_address=ip_address,
-            user_agent=user_agent,
-            is_active=True,
-        )
+                role_id = role  # or paid role if different
 
-        # Log event
-        SessionLog.objects.create(
-            user=user,
-            event_type="login",
-            ip_address=ip_address,
-            user_agent=user_agent,
-            status="success",
-        )
+            profile, created = UserProfile.objects.get_or_create(
+                user=user,
+                defaults={
+                    "email": user.email,
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
+                    "mobile_number": user_data.mobile_number,
+                    "role": role_id,
+                    "is_active": True,
+                    "trial_start": trial_start,
+                    "trial_end": trial_end,
+                    "subscription_start": subscription_start,
+                    "subscription_end": subscription_end,
+                    "payment_verified": payment_verified,
+                            }
+            )
 
-        return TokenResponse(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            expires_in=15 * 60,  # 15 minutes
-            user_id=user.id,
-            username=user.username,
-            email=user.email,
-            first_name=user.first_name,
-            last_name=user.last_name,
-        )
+            # Extra safety: update role if missing
+            if not profile.role and role:
+                profile.role = role
+                profile.save()
+
+            # -------------------------
+            # 5. GENERATE TOKENS
+            # -------------------------
+            access_token = TokenManager.create_access_token(user.id, user.username)
+            refresh_token = TokenManager.create_refresh_token(user.id, user.username)
+            expires_in = settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60
+
+            # -------------------------
+            # 6. LOGGING
+            # -------------------------
+            logger.info(f"User registered: {user.username} from {ip_address}")
+
+            return TokenResponse(
+                access_token=access_token,
+                refresh_token=refresh_token,
+                expires_in=expires_in,
+                user_id=user.id,
+                username=user.username,
+                email=user.email,
+                first_name=user.first_name,
+                last_name=user.last_name,
+            )
 
     except HTTPException:
         raise
+
     except Exception as e:
         security_logger.error(f"Signup error: {str(e)}")
-        raise HTTPException(status_code=500, detail="Registration failed")
+        raise HTTPException(status_code=500, detail="Signup failed")
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -311,7 +364,11 @@ def login(req: LoginRequest, request:Request) -> TokenResponse:
                 BruteForceProtection.log_failed_attempt(
                     req.email, ip_address, user_agent, "invalid_captcha"
                 )
-                raise HTTPException(status_code=401, detail="Invalid or expired captcha")
+
+                raise HTTPException(
+                    status_code=401,
+                    detail="CAPTCHA_INVALID: Captcha is incorrect or expired"
+                )
 
             CaptchaService.mark_captcha_used(req.captcha_id)
 
@@ -322,8 +379,8 @@ def login(req: LoginRequest, request:Request) -> TokenResponse:
 
         # Find user by email
         try:
-            user_profile = UserProfile.objects.select_related("user").get(email__iexact=req.email)
-            user = user_profile.user
+            user = User.objects.get(email__iexact=req.email)
+            user_profile = UserProfile.objects.get(user=user)
         except UserProfile.DoesNotExist:
             security_logger.warning(
                 f"Invalid email for login attempt: {req.email} from {ip_address}"

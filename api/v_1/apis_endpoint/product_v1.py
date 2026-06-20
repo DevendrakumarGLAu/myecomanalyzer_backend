@@ -48,17 +48,6 @@ def add_product(payload: ProductRequest, current_user: User = Depends(get_curren
             message=f"Failed to add product: {str(e)}",
             data=None
         )
-        
-
-
-
-# @router.put("/update", response_model=ProductResponse)
-# def update_product(
-#     id: int = Query(..., description="Product ID"),
-#     payload: ProductRequest = ...,
-#     current_user: User = Depends(get_current_user)
-# ):
-#     return controller.update_product_logic(id, payload, current_user)
 
 @router.put("/update", response_model=APIResponse)
 def update_product(
@@ -91,3 +80,7 @@ def delete_product(product_id: int, current_user: User = Depends(get_current_use
 @router.post("/toggle_active/{product_id}", response_model=ProductResponse)
 def toggle_product_active(product_id: int, current_user: User = Depends(get_current_user)):
     return ProductController.toggle_product_active_logic(product_id, current_user)
+
+@router.delete("/del_products/{product_id}")
+def delete_product(product_id: int):
+    return ProductController.delete_product(product_id)

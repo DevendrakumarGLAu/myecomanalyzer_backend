@@ -478,7 +478,7 @@ class DashboardController:
             # state wise analytics
             # ------------------------
             # state_controller = StateAnalyticsController()
-            state_wise_analytics = StateAnalyticsController.get_state_wise_order_analytics(start_date=date_from, end_date=date_to, platform_id=platform_id, state=None)
+            state_wise_analytics = StateAnalyticsController.get_state_wise_order_analytics(start_date=date_from, end_date=date_to, platform_id=platform_id, state=None,current_user=current_user)
             # ----------------------------
             # RESPONS
             # ----------------------------
