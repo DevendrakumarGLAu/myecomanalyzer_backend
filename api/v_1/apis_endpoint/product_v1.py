@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException,Query
 from django.contrib.auth.models import User
 from typing import List, Optional
 from api.auth import get_current_user
-from api.schemas.product_schema import APIResponse, PaginatedProductResponse, ProductResponse, ProductRequest
+from api.schemas.product_schema import APIResponse, PaginatedProductResponse, ProductResponse, ProductRequest, ProductUpdateRequest
 from api.controllers.product_controller import ProductController
 
 
@@ -51,12 +51,16 @@ def add_product(payload: ProductRequest, current_user: User = Depends(get_curren
 
 @router.put("/update", response_model=APIResponse)
 def update_product(
+    payload: ProductUpdateRequest,
     id: int = Query(..., description="Product ID"),
-    payload: ProductRequest = ...,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     try:
-        product = ProductController.update_product_logic(id, payload, current_user)
+        product = ProductController.update_product_logic(
+            id,
+            payload,
+            current_user
+        )
 
         return APIResponse(
             status=True,
@@ -64,10 +68,17 @@ def update_product(
             data=product
         )
 
+    except HTTPException as e:
+        return APIResponse(
+            status=False,
+            message=str(e.detail),
+            data=None
+        )
+
     except Exception as e:
         return APIResponse(
             status=False,
-            message=f"Failed to update product: {str(e)}",
+            message=str(e),
             data=None
         )
 
