@@ -183,125 +183,304 @@ class ProductController:
             )
 
 
-    @staticmethod
-    def update_product_logic(product_id: int, payload: ProductUpdateRequest, current_user: User):
-        """
-        Update product and its variants. Variants are replaced if provided.
-        """
-        try:
-            product = ProductController.get_product_by_id(product_id, current_user)
-            if not product:
-                raise HTTPException(status_code=404, detail="Product not found")
+    # @staticmethod
+    # def update_product_logic(product_id: int, payload: ProductUpdateRequest, current_user: User):
+    #     """
+    #     Update product and its variants. Variants are replaced if provided.
+    #     """
+    #     try:
+    #         product = ProductController.get_product_by_id(product_id, current_user)
+    #         if not product:
+    #             raise HTTPException(status_code=404, detail="Product not found")
 
-            update_data = payload.dict(exclude_unset=True)
+    #         update_data = payload.dict(exclude_unset=True)
            
 
-            # --- Update Product fields ---
-            for field, value in update_data.items():
-                if field != "variants":
-                    if field == "marketplace":
-                        setattr(product, "platform_id", value)
-                    else:
-                        setattr(product, field, value)
+    #         # --- Update Product fields ---
+    #         for field, value in update_data.items():
+    #             if field != "variants":
+    #                 if field == "marketplace":
+    #                     setattr(product, "platform_id", value)
+    #                 else:
+    #                     setattr(product, field, value)
 
             
-            if "platform_code" in update_data:
-                platform_obj = Platform.objects.filter(code=update_data["platform_code"]).first()
-                product.platform = platform_obj
-            product.updated_by = current_user
-            product.is_auto_created = False
-            product.requires_manual_review = False
-            product.save()
+    #         if "platform_code" in update_data:
+    #             platform_obj = Platform.objects.filter(code=update_data["platform_code"]).first()
+    #             product.platform = platform_obj
+    #         product.updated_by = current_user
+    #         product.is_auto_created = False
+    #         product.requires_manual_review = False
+    #         product.save()
 
-            # --- Update Variants if provided ---
-            if "variants" in update_data:
+    #         # --- Update Variants if provided ---
+    #         if "variants" in update_data:
                 
-                existing_variants = {v.id: v for v in product.variants.all()}
-                incoming_variants = payload.variants or []
-                incoming_ids = []
-                for variant_data in incoming_variants:
-                    variant_id = variant_data.id
+    #             existing_variants = {v.id: v for v in product.variants.all()}
+    #             incoming_variants = payload.variants or []
+    #             incoming_ids = []
+    #             for variant_data in incoming_variants:
+    #                 variant_id = variant_data.id
 
-                    if variant_id and variant_id in existing_variants:
-                        # Update existing variant
-                        variant = existing_variants[variant_id]
-                        old_cost_price = variant.cost_price
-                        variant.sku = variant_data.sku
-                        variant.size = variant_data.size
-                        variant.color = variant_data.color
-                        variant.cost_price = variant_data.cost_price
-                        variant.selling_price = variant_data.selling_price
-                        variant.stock = variant_data.stock
-                        variant.shipping_cost = variant_data.shipping_cost or 0.0
-                        variant.rto_cost = variant_data.rto_cost or 0.0
-                        if old_cost_price != variant_data.cost_price:
-                            CostPriceUpdateHistory.objects.create(
-                                variant=variant,
-                                old_cost_price=old_cost_price,
-                                new_cost_price=variant_data.cost_price,
-                                updated_by=current_user
-                            )
-                        variant.is_auto_created = False
-                        variant.requires_manual_review = False
-                        variant.save()
-                        incoming_ids.append(variant_id)
-                    else:
-                        ProductVariant.objects.update_or_create(
-                            product=product,
-                            sku=variant_data.sku,
-                            size=variant_data.size,
-                            color=variant_data.color,
-                            defaults={
-                                "cost_price": variant_data.cost_price,
-                                "selling_price": variant_data.selling_price,
-                                "stock": variant_data.stock,
-                                "shipping_cost": variant_data.shipping_cost or 0,
-                                "rto_cost": variant_data.rto_cost or 0,
-                                "is_auto_created": False,
-                                "requires_manual_review": False,
-                            }
+    #                 if variant_id and variant_id in existing_variants:
+    #                     # Update existing variant
+    #                     variant = existing_variants[variant_id]
+    #                     old_cost_price = variant.cost_price
+    #                     variant.sku = variant_data.sku
+    #                     variant.size = variant_data.size
+    #                     variant.color = variant_data.color
+    #                     variant.cost_price = variant_data.cost_price
+    #                     variant.selling_price = variant_data.selling_price
+    #                     variant.stock = variant_data.stock
+    #                     variant.shipping_cost = variant_data.shipping_cost or 0.0
+    #                     variant.rto_cost = variant_data.rto_cost or 0.0
+    #                     if old_cost_price != variant_data.cost_price:
+    #                         CostPriceUpdateHistory.objects.create(
+    #                             variant=variant,
+    #                             old_cost_price=old_cost_price,
+    #                             new_cost_price=variant_data.cost_price,
+    #                             updated_by=current_user
+    #                         )
+    #                     variant.is_auto_created = False
+    #                     variant.requires_manual_review = False
+    #                     variant.save()
+    #                     incoming_ids.append(variant_id)
+    #                 else:
+    #                     ProductVariant.objects.update_or_create(
+    #                         product=product,
+    #                         sku=variant_data.sku,
+    #                         size=variant_data.size,
+    #                         color=variant_data.color,
+    #                         defaults={
+    #                             "cost_price": variant_data.cost_price,
+    #                             "selling_price": variant_data.selling_price,
+    #                             "stock": variant_data.stock,
+    #                             "shipping_cost": variant_data.shipping_cost or 0,
+    #                             "rto_cost": variant_data.rto_cost or 0,
+    #                             "is_auto_created": False,
+    #                             "requires_manual_review": False,
+    #                         }
+    #                     )
+
+    #         # Prefetch variants for response
+    #         product = Product.objects.prefetch_related("variants").get(id=product.id)
+    #         sku = product.variants.first().sku if product.variants.exists() else None
+    #         category_name = product.category.name if product.category else None
+    #         color= product.variants.first().color if product.variants.exists() else None
+    #         cost_price = product.variants.first().cost_price if product.variants.exists() else None
+    #         selling_price = product.variants.first().selling_price if product.variants.exists() else None
+    #         stock = product.variants.first().stock if product.variants.exists() else None
+    #         catalog_id = product.catalog_id if product.catalog_id else None
+    #         platform_code = product.platform.code if product.platform else None
+    #         # Convert to Pydantic schema
+    #         product_response = ProductResponse(
+    #                 id=product.id,
+    #                 catalog_id=product.catalog_id,
+    #                 name=product.name,
+    #                 category_id=product.category_id,
+    #                 category_name=category_name,  # ✅ ADD THIS
+    #                 platform_code=product.platform.code if product.platform else None,  # ✅ also fix this
+    #                 gst_percent=float(product.gst_percent),
+    #                 commission_percent=float(product.commission_percent),
+    #                 sku=sku,
+    #                 color=color,
+    #                 cost_price=cost_price,
+    #                 selling_price=selling_price,
+    #                 stock=stock,
+    #                 is_active=product.is_active,
+    #                 variants=[
+    #                     ProductVariantResponse.model_validate(v)
+    #                     for v in product.variants.all()
+    #                 ]
+    #             )
+    #         return product_response
+
+    #     except Exception as e:
+    #         raise HTTPException(
+    #             status_code=500,
+    #             detail=f"Error while updating product: {str(e)}"
+    #         )
+    @staticmethod
+    def update_product_logic(
+        product_id: int,
+        payload: ProductUpdateRequest,
+        current_user: User,
+    ):
+
+        product = Product.objects.prefetch_related(
+            "variants",
+            "category",
+            "platform",
+        ).filter(
+            id=product_id,
+            owner=current_user
+        ).first()
+
+        if not product:
+            raise HTTPException(
+                status_code=404,
+                detail="Product not found"
+            )
+
+        # -----------------------
+        # Update Product
+        # -----------------------
+
+        if payload.catalog_id is not None:
+            product.catalog_id = payload.catalog_id
+
+        if payload.name is not None:
+            product.name = payload.name
+
+        if payload.category_id is not None:
+            product.category_id = payload.category_id
+
+        if payload.gst_percent is not None:
+            product.gst_percent = payload.gst_percent
+
+        if payload.commission_percent is not None:
+            product.commission_percent = payload.commission_percent
+
+        if payload.is_active is not None:
+            product.is_active = payload.is_active
+
+        if payload.platform_code:
+            platform = Platform.objects.filter(
+                code=payload.platform_code
+            ).first()
+
+            if platform:
+                product.platform = platform
+
+        product.updated_by = current_user
+        product.is_auto_created = False
+        product.requires_manual_review = False
+        product.save()
+
+        # -----------------------
+        # Update Variants
+        # -----------------------
+
+        if payload.variants:
+
+            processed_ids = []
+
+            for item in payload.variants:
+
+                sku = item.sku.strip().upper()
+                size = item.size.strip() if item.size else None
+                color = item.color.strip().upper() if item.color else None
+
+                # ---------- Existing Variant ----------
+                if item.id:
+
+                    variant = ProductVariant.objects.filter(
+                        id=item.id,
+                        product=product
+                    ).first()
+
+                    if not variant:
+                        continue
+
+                    duplicate = ProductVariant.objects.filter(
+                        product=product,
+                        sku=sku,
+                        size=size,
+                        color=color
+                    ).exclude(
+                        id=variant.id
+                    ).exists()
+
+                    if duplicate:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Duplicate variant ({sku}, {size}, {color})"
                         )
 
-            # Prefetch variants for response
-            product = Product.objects.prefetch_related("variants").get(id=product.id)
-            sku = product.variants.first().sku if product.variants.exists() else None
-            category_name = product.category.name if product.category else None
-            color= product.variants.first().color if product.variants.exists() else None
-            cost_price = product.variants.first().cost_price if product.variants.exists() else None
-            selling_price = product.variants.first().selling_price if product.variants.exists() else None
-            stock = product.variants.first().stock if product.variants.exists() else None
-            catalog_id = product.catalog_id if product.catalog_id else None
-            platform_code = product.platform.code if product.platform else None
-            # Convert to Pydantic schema
-            product_response = ProductResponse(
-                    id=product.id,
-                    catalog_id=product.catalog_id,
-                    name=product.name,
-                    category_id=product.category_id,
-                    category_name=category_name,  # ✅ ADD THIS
-                    platform_code=product.platform.code if product.platform else None,  # ✅ also fix this
-                    gst_percent=float(product.gst_percent),
-                    commission_percent=float(product.commission_percent),
-                    sku=sku,
-                    color=color,
-                    cost_price=cost_price,
-                    selling_price=selling_price,
-                    stock=stock,
-                    is_active=product.is_active,
-                    variants=[
-                        ProductVariantResponse.model_validate(v)
-                        for v in product.variants.all()
-                    ]
-                )
-            return product_response
+                    old_cost = variant.cost_price
 
-        except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error while updating product: {str(e)}"
-            )
-            
-    
+                    variant.sku = sku
+                    variant.size = size
+                    variant.color = color
+                    variant.cost_price = item.cost_price
+                    variant.selling_price = item.selling_price
+                    variant.stock = item.stock
+                    variant.shipping_cost = item.shipping_cost or 0
+                    variant.rto_cost = item.rto_cost or 0
+                    variant.is_auto_created = False
+                    variant.requires_manual_review = False
+                    variant.save()
+
+                    if old_cost != item.cost_price:
+                        CostPriceUpdateHistory.objects.create(
+                            variant=variant,
+                            old_cost_price=old_cost,
+                            new_cost_price=item.cost_price,
+                            updated_by=current_user,
+                        )
+
+                    processed_ids.append(variant.id)
+
+                # ---------- New Variant ----------
+                else:
+
+                    variant, created = ProductVariant.objects.get_or_create(
+                        product=product,
+                        sku=sku,
+                        size=size,
+                        color=color,
+                        defaults={
+                            "cost_price": item.cost_price,
+                            "selling_price": item.selling_price,
+                            "stock": item.stock,
+                            "shipping_cost": item.shipping_cost or 0,
+                            "rto_cost": item.rto_cost or 0,
+                            "is_auto_created": False,
+                            "requires_manual_review": False,
+                        },
+                    )
+
+                    if not created:
+                        variant.cost_price = item.cost_price
+                        variant.selling_price = item.selling_price
+                        variant.stock = item.stock
+                        variant.shipping_cost = item.shipping_cost or 0
+                        variant.rto_cost = item.rto_cost or 0
+                        variant.save()
+
+                    processed_ids.append(variant.id)
+
+            # Optional: delete removed variants
+            ProductVariant.objects.filter(
+                    product=product
+                ).exclude(
+                    id__in=processed_ids
+                ).update(is_active=False)
+
+        product.refresh_from_db()
+
+        first = product.variants.first()
+
+        return ProductResponse(
+            id=product.id,
+            catalog_id=product.catalog_id,
+            name=product.name,
+            category_id=product.category_id,
+            category_name=product.category.name if product.category else "",
+            platform_code=product.platform.code if product.platform else None,
+            gst_percent=float(product.gst_percent),
+            commission_percent=float(product.commission_percent),
+            is_active=product.is_active,
+            sku=first.sku if first else "",
+            color=first.color if first else "",
+            cost_price=first.cost_price if first else 0,
+            selling_price=first.selling_price if first else 0,
+            stock=first.stock if first else 0,
+            variants=[
+                ProductVariantResponse.model_validate(v)
+                for v in product.variants.all()
+            ],
+        )      
     @staticmethod
     def delete_product_logic(product_id: int, current_user: User):
         """
@@ -384,4 +563,34 @@ class ProductController:
         return {
             "success": True,
             "message": "Deleted successfully"
+        }
+        
+        
+    # product toggle deactivate-
+    # -------------------
+    @staticmethod
+    def deactivate_product(product_id: int, current_user: User):
+
+        product = Product.objects.filter(
+            id=product_id,
+            owner=current_user
+        ).first()
+
+        if not product:
+            raise HTTPException(
+                status_code=404,
+                detail="Product not found"
+            )
+
+        product.is_active = False
+        product.updated_by = current_user
+        product.save()
+
+        ProductVariant.objects.filter(
+            product=product
+        ).update(is_active=False)
+
+        return {
+            "status": True,
+            "message": "Product deactivated successfully"
         }

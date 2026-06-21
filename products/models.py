@@ -40,6 +40,7 @@ class ProductVariant(models.Model):
     shipping_cost = models.FloatField(default=0)
     rto_cost = models.FloatField(default=0)
     # NEW
+    is_active = models.BooleanField(default=True)
     is_auto_created = models.BooleanField(default=False)
     requires_manual_review = models.BooleanField(default=False)
 

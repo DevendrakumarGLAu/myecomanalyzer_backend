@@ -131,6 +131,9 @@ class SettlementUploadController:
             # ADS COST SHEET
             # ==========================================
             ads_records = []
+            existing_ads = []
+            existing_set = set()
+            new_records = []
             try:
                 df_ads = pd.read_excel(
                     BytesIO(file_content),
@@ -146,8 +149,8 @@ class SettlementUploadController:
                     .str.replace("\n", " ", regex=False)
                 )
 
-                print("ADS COLUMNS:", df_ads.columns.tolist())
-                print("ADS ROWS:", len(df_ads))
+                # print("ADS COLUMNS:", df_ads.columns.tolist())
+                # print("ADS ROWS:", len(df_ads))
 
                 # Optional: remove old ads spend records for this platform
                 # AdsSpend.objects.filter(platform=platform_obj).delete()
@@ -216,6 +219,7 @@ class SettlementUploadController:
                     )
 
                 print("ADS RECORDS TO INSERT:", len(ads_records))
+                
 
                 if ads_records:
                     existing_ads = AdsSpend.objects.filter(
