@@ -452,10 +452,10 @@ class ProductController:
 
             # Optional: delete removed variants
             ProductVariant.objects.filter(
-                product=product
-            ).exclude(
-                id__in=processed_ids
-            ).delete()
+                    product=product
+                ).exclude(
+                    id__in=processed_ids
+                ).update(is_active=False)
 
         product.refresh_from_db()
 
@@ -563,4 +563,34 @@ class ProductController:
         return {
             "success": True,
             "message": "Deleted successfully"
+        }
+        
+        
+    # product toggle deactivate-
+    # -------------------
+    @staticmethod
+    def deactivate_product(product_id: int, current_user: User):
+
+        product = Product.objects.filter(
+            id=product_id,
+            owner=current_user
+        ).first()
+
+        if not product:
+            raise HTTPException(
+                status_code=404,
+                detail="Product not found"
+            )
+
+        product.is_active = False
+        product.updated_by = current_user
+        product.save()
+
+        ProductVariant.objects.filter(
+            product=product
+        ).update(is_active=False)
+
+        return {
+            "status": True,
+            "message": "Product deactivated successfully"
         }

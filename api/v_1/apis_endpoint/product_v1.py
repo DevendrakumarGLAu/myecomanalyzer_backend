@@ -95,3 +95,11 @@ def toggle_product_active(product_id: int, current_user: User = Depends(get_curr
 @router.delete("/del_products/{product_id}")
 def delete_product(product_id: int):
     return ProductController.delete_product(product_id)
+
+# product deactivate
+@router.patch("/deactivate")
+def deactivate_product(
+    id: int = Query(...),
+    current_user: User = Depends(get_current_user),
+):
+    return ProductController.deactivate_product(id, current_user)

@@ -30,6 +30,14 @@ router.include_router(login.router)    # /api/v1/auth/login (deprecated, use /au
 from api.v_1.apis_endpoint.categories_v1 import router as category_router
 router.include_router(category_router, prefix="/categories", tags=["Categories"])
 
+# profile
+from api.v_1.apis_endpoint.user_profile_v1 import router as profile_router
+router.include_router(profile_router, prefix="/profile", tags=["User Profile"])
+
+# subscription
+from api.v_1.apis_endpoint.subscription_v1 import router as subscription_router
+router.include_router(subscription_router, prefix="/subscription_v1", tags=["Subscription"])
+
 # product router
 from api.v_1.apis_endpoint.product_v1 import router as product_router
 router.include_router(product_router, prefix="/products", tags=["Products V1"])
