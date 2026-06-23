@@ -25,6 +25,7 @@ class Order(BaseModel):
     variant = models.ForeignKey(ProductVariant,on_delete=models.PROTECT,null=False,blank=False,related_name="orders")
     quantity = models.IntegerField(default=1)
     selling_price = models.FloatField()
+    cost_price_at_order = models.FloatField(default=0,help_text="Cost price captured when the order was created")
 
     status = models.ForeignKey(OrderStatus, on_delete=models.PROTECT)
     status_updated_at = models.DateTimeField(null=True, blank=True)

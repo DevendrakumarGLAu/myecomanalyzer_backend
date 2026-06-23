@@ -1,0 +1,21 @@
+select * from product_variants where sku ='SLV-CRST';
+select * from orders o limit 5;
+select * from orders o WHERE cost_price_at_order = 0;
+select * from product_variants where id=117 ;
+select * from product_variants where sku ='0O0-Z_wu';
+
+select * from cost_price_update_history cpuh;
+TRUNCATE TABLE cost_price_update_history RESTART IDENTITY;
+['Customer Address Exchange', 'Prashant palei', 'Shadowfax', 'Alipada , Bada pokhari chhaka', 'Bindipur, Gadisagada, Puri District', 'Pickup', 'Puri District, Odisha, 752019', 'Destination Code', 'If undelivered, return to: E33_NKP', 'Devanjali enterprises', 'SHRI RAM COLONY GALI NA 2, FIROZABAD, _KHRa', 'Firozabad', 'Return Code', '-', '283203,2627561', 'Firozabad, Uttar Pradesh, 283203', 'SF3559338269MEO', 'Product Details', 'SKU Size Qty Color Order No.', 'MAHROON 2.6 1 Maroon 296319903609837440_1']
+
+
+SELECT COUNT(*)
+FROM orders
+WHERE cost_price_at_order = 0
+   OR cost_price_at_order IS NULL;
+
+UPDATE orders o
+SET cost_price_at_order = pv.cost_price
+FROM product_variants pv
+WHERE o.variant_id = pv.id
+  AND (o.cost_price_at_order = 0 OR o.cost_price_at_order IS NULL);

@@ -287,7 +287,7 @@ class DashboardController:
             ).annotate(
                 profit_per_row=ExpressionWrapper(
                     F("final_settlement_amount") -
-                    (F("order__quantity") * F("order__variant__cost_price")),
+                    (F("order__quantity") * F("order__cost_price_at_order")),
                     output_field=DecimalField(max_digits=12, decimal_places=2)
                 )
             )

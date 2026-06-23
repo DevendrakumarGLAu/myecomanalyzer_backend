@@ -33,7 +33,8 @@ class ProductVariant(models.Model):
     size = models.CharField(max_length=50, blank=True, null=True)
     color = models.CharField(max_length=50, blank=True, null=True)
 
-    cost_price = models.FloatField()
+    cost_price = models.FloatField(null=True, blank=True)
+    cost_price_pending = models.BooleanField(default=False)
     selling_price = models.FloatField()
     stock = models.IntegerField(default=0)
 
@@ -56,6 +57,7 @@ class CostPriceUpdateHistory(BaseModel):
     variant = models.ForeignKey(ProductVariant, on_delete=models.CASCADE, related_name="cost_price_updates")
     old_cost_price = models.FloatField()
     new_cost_price = models.FloatField()
+    effective_from = models.DateTimeField(null=True, blank=True)
     updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
 
     class Meta:
