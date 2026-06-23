@@ -397,7 +397,20 @@ class ProductController:
                             detail=f"Duplicate variant ({sku}, {size}, {color})"
                         )
 
-                    old_cost = variant.cost_price
+                    old_cost = variant.cost_price or 0
+                    # Save history BEFORE updating the variant
+                    if variant.cost_price != item.cost_price:
+                        CostPriceUpdateHistory.objects.create(
+                            variant=variant,
+                            old_cost_price=old_cost,
+                            new_cost_price=item.cost_price,
+                            effective_from=item.effective_from,
+                            created_by=current_user,
+                            updated_by=current_user,
+                        )
+
+                    variant.cost_price = item.cost_price
+                    variant.cost_price_pending = False
 
                     variant.sku = sku
                     variant.size = size
@@ -409,15 +422,8 @@ class ProductController:
                     variant.rto_cost = item.rto_cost or 0
                     variant.is_auto_created = False
                     variant.requires_manual_review = False
-                    variant.save()
 
-                    if old_cost != item.cost_price:
-                        CostPriceUpdateHistory.objects.create(
-                            variant=variant,
-                            old_cost_price=old_cost,
-                            new_cost_price=item.cost_price,
-                            updated_by=current_user,
-                        )
+                    variant.save()
 
                     processed_ids.append(variant.id)
 

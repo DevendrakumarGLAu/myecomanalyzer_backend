@@ -1,3 +1,5 @@
+from datetime import date
+
 from pydantic import BaseModel
 from typing import List, Optional
 
@@ -8,6 +10,7 @@ class ProductVariantRequest(BaseModel):
     size: Optional[str] = None
     color: Optional[str] = None
     cost_price: float
+    effective_from: Optional[date] = None
     selling_price: float
     stock: int
     rto_cost: Optional[float] = None

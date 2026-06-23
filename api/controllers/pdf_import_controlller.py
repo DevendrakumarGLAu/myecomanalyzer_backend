@@ -173,6 +173,8 @@ class InvoiceExtractController:
         imported_orders = []
         duplicate_orders = []
         error_orders = []
+        exchange_orders = []
+        multi_quantity_orders = []
 
         with pdfplumber.open(file_path) as pdf:
             for idx, page in enumerate(pdf.pages, start=1):
@@ -181,12 +183,32 @@ class InvoiceExtractController:
 
                     data = InvoiceExtractController.parse_invoice_data(text)
 
-                    # sku, quantity = InvoiceExtractController.extract_product_from_text(
-                    #     text, data["marketplace_sub_order_id"]
-                    # )
                     sku, size, quantity, color = InvoiceExtractController.extract_product_from_text(
                             text, data["marketplace_sub_order_id"]
                         )
+                    # ==========================
+                    # MULTIQUANTITY ORDER LOGIC HERE
+                    # ==========================
+                    if quantity > 1:
+                        multi_quantity_orders.append({
+                            "row": idx,
+                            "order_id": data["marketplace_sub_order_id"],
+                            "sku": sku,
+                            "size": size,
+                            "color": color,
+                            "quantity": quantity,
+                            "reason": "Multi quantity order"
+                        })
+
+                        # If you don't want to import these orders automatically:
+                        continue
+                    # ==========================
+                    # ADD EXCHANGE LOGIC HERE
+                    # ==========================
+                    is_exchange = "CUSTOMER ADDRESS EXCHANGE" in text.upper()
+                    if is_exchange:
+                        # your exchange handling code
+                        pass
                     delivery_partner_name = InvoiceExtractController.extract_delivery_partner(text)
                     payment_type = InvoiceExtractController.extract_payment_type(text)
 
@@ -225,35 +247,46 @@ class InvoiceExtractController:
                             defaults={"code": delivery_partner_name.upper().replace(" ", "_")}
                         )
 
-                    # 🔁 DUPLICATE CHECK
-                    # if Order.objects.filter(
-                    #     marketplace_sub_order_id=data["marketplace_sub_order_id"]
-                    # ).exists():
-                    #     duplicate_orders.append({
-                    #         "order_id": data["marketplace_sub_order_id"],
-                    #         "reason": "Order already exists"
-                    #     })
-                    #     continue
-                    if Order.objects.filter(
-                        marketplace_sub_order_id=data["marketplace_sub_order_id"]
-                    ).exists():
-                        duplicate_orders.append({
-                            "row": idx,
-                            "order_id": data["marketplace_sub_order_id"],
-                            "sku": sku,
-                            "size": size,
-                            "color": color,
-                            "reason": "Order already exists"
-                        })
+                   
+                    existing_order = Order.objects.filter(marketplace_sub_order_id=data["marketplace_sub_order_id"]).select_related("variant").first()
+                    if existing_order:
+                        if existing_order and data.get("payment_type") == "EXCHANGE":
+                            exchange_orders.append({
+                                "row": idx,
+                                "order_id": data["marketplace_sub_order_id"],
+
+                                # Existing order (old)
+                                "old_sku": existing_order.variant.sku if existing_order.variant else "",
+                                "old_size": existing_order.variant.size if existing_order.variant else "",
+                                "old_color": existing_order.variant.color if existing_order.variant else "",
+
+                                # Invoice (new)
+                                "new_sku": sku,
+                                "new_size": size,
+                                "new_color": color,
+
+                                "reason": "Exchange order"
+                            })
+                            continue
+                        else:
+                            duplicate_orders.append({
+                                "row": idx,
+                                "order_id": data["marketplace_sub_order_id"],
+                                "sku": sku,
+                                "size": size,
+                                "color": color,
+                                "reason": "Order already exists"
+                            })
+
                         continue
 
                     # product = Product.objects.get(sku=data["sku"])
                     # variant = ProductVariant.objects.select_related("product").get(sku=data["sku"])
                     try:
                         variant = ProductVariant.objects.select_related("product").filter(
-                            sku__iexact=sku,
-    size=size,
-    color__iexact=color
+                            sku__iexact=sku.strip(),
+                            size=str(size).strip(),
+                            color__iexact=color.strip(),
                         ).first()
                         
                         if not variant:   # ✅ ADD THIS CHECK
@@ -321,6 +354,7 @@ class InvoiceExtractController:
                             variant=variant,
                             quantity=data["quantity"],
                             selling_price=data["selling_price"],
+                            cost_price_at_order=variant.cost_price,
                             status=status,
                             delivery_partner=delivery_partner_obj,
                             payment_type=data.get("payment_type", "COD"),
@@ -377,11 +411,15 @@ class InvoiceExtractController:
                 "total": len(pdf.pages),
                 "imported": len(imported_orders),
                 "duplicates": len(duplicate_orders),
+                "exchange_orders": len(exchange_orders),
+                "multi_quantity_orders": len(multi_quantity_orders),
                 "errors": len(error_orders),
                 "not_inserted": len(duplicate_orders) + len(error_orders)
             },
             "imported_orders": imported_orders,
             "duplicate_orders": duplicate_orders,
+            "exchange_orders": exchange_orders,
+            "multi_quantity_orders": multi_quantity_orders,
             "error_orders": error_orders,
             "error_file": error_file_url
         }
@@ -504,77 +542,6 @@ class InvoiceExtractController:
         not_found = []
         
         sub_order_ids = []
-
-        # with transaction.atomic():
-        #     for idx, row in enumerate(reader, start=1):
-        #         try:
-        #             sub_order_id = row.get("Sub Order No")
-        #             raw_status = row.get("Reason for Credit Entry")
-
-        #             if not sub_order_id or not raw_status:
-        #                 errors.append({
-        #                     "row": idx,
-        #                     "reason": "Missing Sub Order No or Status"
-        #                 })
-        #                 continue
-
-        #             # Map status
-        #             status_code = STATUS_MAPPING.get(
-        #                 raw_status.strip(), raw_status.strip()
-        #             )
-
-        #             status_label = status_code.replace("_", " ").title()
-
-        #             # Get/Create status
-        #             status_obj, _ = OrderStatus.objects.get_or_create(
-        #                 code=status_code,
-        #                 defaults={
-        #                     "label": status_label,
-        #                     "created_by": current_user,
-        #                     "updated_by": current_user
-        #                 }
-        #             )
-
-        #             # Find order
-        #             order = Order.objects.filter(
-        #                 marketplace_sub_order_id=sub_order_id
-        #             ).first()
-
-        #             if not order:
-        #                 not_found.append({
-        #                     "sub_order_id": sub_order_id,
-        #                     "reason": "Order not found"
-        #                 })
-        #                 continue
-
-        #             # Update status
-        #             order.status = status_obj
-        #             order.updated_by = current_user
-        #             order.save()
-
-        #             updated.append({
-        #                 "sub_order_id": sub_order_id,
-        #                 "status": status_code
-        #             })
-
-        #         except Exception as e:
-        #             errors.append({
-        #                 "row": idx,
-        #                 "sub_order_id": row.get("Sub Order No"),
-        #                 "reason": str(e)
-        #             })
-
-        # return {
-        #     "summary": {
-        #         "total": len(updated) + len(errors) + len(not_found),
-        #         "updated": len(updated),
-        #         "errors": len(errors),
-        #         "not_found": len(not_found)
-        #     },
-        #     "updated_orders": updated,
-        #     "errors": errors,
-        #     "not_found": not_found
-        # }
         for row in rows:
             sub_order_id = row.get("Sub Order No")
 
@@ -718,7 +685,7 @@ class InvoiceExtractController:
                 # -----------------------------
                 # UPDATE ORDER
                 # -----------------------------
-
+                
                 order.status = status_obj
                 order.updated_by = current_user
 
@@ -797,16 +764,19 @@ class InvoiceExtractController:
     @staticmethod
     def extract_payment_type(text):
         if not text:
-            return "PREPAID"
-
+            return "COD"
         text_upper = text.upper()
 
-        if "COD" in text_upper:
-            return "COD"
+        # Check EXCHANGE FIRST
+        if "CUSTOMER ADDRESS EXCHANGE" in text_upper or "EXCHANGE" in text_upper:
+            return "EXCHANGE"
+
         if "PREPAID" in text_upper:
             return "PREPAID"
-        if "EXCHANGE" in text_upper:
-            return "EXCHANGE"
+
+        if "CUSTOMER ADDRESS COD" in text_upper or "COD:" in text_upper:
+            return "COD"
+
         return "COD"
     
     @staticmethod
@@ -938,6 +908,7 @@ class InvoiceExtractController:
             variant=variant,
             quantity=quantity,
             selling_price=data.get("selling_price", 0),
+            cost_price_at_order=variant.cost_price,
             status=status,
             delivery_partner_id=delivery_partner_id,
             payment_type=data.get("payment_type", "COD"),
@@ -1061,22 +1032,26 @@ class InvoiceExtractController:
                     break
         # 3. Find by existing variant
         category = Category.objects.first()
-        color = color.strip().title() if color else ""
+        color = color.strip().upper() if color else ""
         size = str(size).strip() if size else ""
+        sku = sku.strip()
+        
+        # 4. Create only if still not found
+        
+        # 3. Find by existing variant (only if product not already found)
         if not product:
-            existing_variant = ProductVariant.objects.filter(
-                sku__iexact=sku,
-                size=size,
-                color__iexact=color,
-            ).select_related("product").first()
+            existing_variant = (
+                ProductVariant.objects.select_related("product")
+                .filter(
+                    sku__iexact=sku.strip(),
+                    size=str(size).strip(),
+                    color__iexact=color.strip(),
+                )
+                .first()
+            )
 
             if existing_variant:
                 product = existing_variant.product
-
-    
-    
-        # 4. Create only if still not found
-        
         if not product:
             product = Product.objects.create(
                 catalog_id = catalog_value,
@@ -1095,20 +1070,29 @@ class InvoiceExtractController:
         # --------------------------------------------------
         # 4. Create or update variant
         # --------------------------------------------------
-        ProductVariant.objects.update_or_create(
-                product=product,
-                sku=sku,
-                size=size,
-                color=color.upper(),
-                defaults={
-                    "selling_price": selling_price or 0,
-                    "cost_price": cost_price or 0,
-                    "stock": 10,
-                    "shipping_cost": shipping_cost or 150,
-                    "rto_cost": rto_cost or 10,
-                    "is_auto_created": True,
-                    "requires_manual_review": True,
-                },
-            )
+        variant, created = ProductVariant.objects.get_or_create(
+            product=product,
+            sku=sku.strip(),
+            size=str(size).strip(),
+            color=color.strip().upper(),
+            defaults={
+                "selling_price": selling_price or 0,
+                 "cost_price": None,
+                "stock": 50,
+                "shipping_cost": shipping_cost or 150,
+                "rto_cost": rto_cost or 10,
+                "is_auto_created": True,
+                "requires_manual_review": True,
+            },
+        )
 
         return product
+    
+    def normalize_color(c):
+        return (c or "").strip().upper()
+
+    def normalize_size(s):
+        try:
+            return str(float(s)).rstrip("0").rstrip(".")
+        except:
+            return str(s).strip()
