@@ -251,22 +251,59 @@ class InvoiceExtractController:
                     existing_order = Order.objects.filter(marketplace_sub_order_id=data["marketplace_sub_order_id"]).select_related("variant").first()
                     if existing_order:
                         if existing_order and data.get("payment_type") == "EXCHANGE":
+                            old_variant = existing_order.variant
+                            new_variant = ProductVariant.objects.filter(
+                                sku__iexact=sku.strip(),
+                                size=str(size).strip(),
+                                color__iexact=color.strip()
+                            ).first()
+                            if not new_variant:
+                                exchange_orders.append({
+                                    "row": idx,
+                                    "order_id": data["marketplace_sub_order_id"],
+                                    "old_sku": old_variant.sku if old_variant else "",
+                                    "new_sku": sku,
+                                    "reason": "New exchange variant not found"
+                                })
+                                continue
+                            if new_variant.stock < 1:
+                                exchange_orders.append({
+                                    "row": idx,
+                                    "order_id": data["marketplace_sub_order_id"],
+                                    "old_sku": old_variant.sku if old_variant else "",
+                                    "new_sku": new_variant.sku,
+                                    "reason": "Insufficient stock for exchange"
+                                })
+                                continue
+                            with transaction.atomic():
+                                # Return old stock
+                                old_variant.stock += existing_order.quantity
+                                old_variant.save(update_fields=["stock"])
+                                # Deduct new stock
+                                new_variant.stock -= existing_order.quantity
+                                new_variant.save(update_fields=["stock"])
+                                # Update order
+                                existing_order.product = new_variant.product
+                                existing_order.variant = new_variant
+                                existing_order.selling_price = data["selling_price"]
+                                existing_order.updated_by = current_user
+                                existing_order.save()
+
                             exchange_orders.append({
                                 "row": idx,
                                 "order_id": data["marketplace_sub_order_id"],
 
-                                # Existing order (old)
-                                "old_sku": existing_order.variant.sku if existing_order.variant else "",
-                                "old_size": existing_order.variant.size if existing_order.variant else "",
-                                "old_color": existing_order.variant.color if existing_order.variant else "",
+                                "old_sku": old_variant.sku,
+                                "old_size": old_variant.size,
+                                "old_color": old_variant.color,
 
-                                # Invoice (new)
-                                "new_sku": sku,
-                                "new_size": size,
-                                "new_color": color,
+                                "new_sku": new_variant.sku,
+                                "new_size": new_variant.size,
+                                "new_color": new_variant.color,
 
-                                "reason": "Exchange order"
+                                "reason": "Exchange completed"
                             })
+
                             continue
                         else:
                             duplicate_orders.append({
