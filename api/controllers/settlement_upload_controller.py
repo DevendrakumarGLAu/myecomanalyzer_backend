@@ -1,3 +1,5 @@
+import uuid
+
 import pandas as pd
 from django.db import transaction
 from io import BytesIO
@@ -7,10 +9,14 @@ from django.utils import timezone
 from adsSpend.models import AdsSpend
 from api.controllers.profit_controller import ProfitCalculationService
 from api.excel_upload.platform_factory import SettlementPlatformFactory
+from categories.models import Category
+from customers.models import Customer
+from marketplace.models import MarketplaceOrder
 from orders.models import Order
 from payments.models import OrderSettlement
 from orders_status.models import OrderStatus
 from platforms.models import Platform
+from products.models import Product, ProductVariant
 
 
 def clean_number(value):
@@ -84,6 +90,11 @@ class SettlementUploadController:
             platform_obj = Platform.objects.filter(code=platform_code).first()
             if not platform_obj:
                 raise HTTPException(status_code=400, detail="Invalid platform code")
+            
+            products_created = 0
+            variants_created = 0
+            orders_created = 0
+            customers_created = 0
 
             file.seek(0)
             file_content = file.read()
@@ -106,10 +117,20 @@ class SettlementUploadController:
             sub_orders = df[column_mapping["sub_order_id"]].astype(str).str.strip().tolist()
 
             # ✅ Fetch Orders
+            # orders = {
+            #     o.marketplace_sub_order_id: o
+            #     for o in Order.objects.filter(marketplace_sub_order_id__in=sub_orders)
+            # }
             orders = {
                 o.marketplace_sub_order_id: o
-                for o in Order.objects.filter(marketplace_sub_order_id__in=sub_orders)
+                for o in Order.objects.filter(
+                    marketplace_sub_order_id__in=sub_orders) }
+
+            variants_cache = {
+                v.sku.upper(): v
+                for v in ProductVariant.objects.select_related("product")
             }
+            customer_cache = {}
 
             # ✅ Existing settlements
             existing = {
@@ -269,15 +290,39 @@ class SettlementUploadController:
                         })
                         continue
 
+                    # order = orders.get(sub_order)
+                    # if not order:
+                    #     skipped += 1
+                    #     skipped_details.append({
+                    #             "row": idx + 2,
+                    #             "sub_order": sub_order,
+                    #             "reason": "Order not found in DB"
+                    #         })
+                    #     continue
                     order = orders.get(sub_order)
                     if not order:
-                        skipped += 1
-                        skipped_details.append({
-                                "row": idx + 2,
-                                "sub_order": sub_order,
-                                "reason": "Order not found in DB"
-                            })
-                        continue
+                        result = SettlementUploadController.get_or_create_order_from_settlement_row(
+                                row=row,
+                                mapping=column_mapping,
+                                platform_obj=platform_obj,
+                                current_user=current_user,
+                                variants_cache=variants_cache,
+                                orders_cache=orders,
+                                customer_cache=customer_cache
+                            )
+
+                        order = result["order"]
+                        if result["product_created"]:
+                            products_created += 1
+
+                        if result["variant_created"]:
+                            variants_created += 1
+
+                        if result["customer_created"]:
+                            customers_created += 1
+
+                        if result["order_created"]:
+                            orders_created += 1
 
                     # ✅ STATUS
                     # ✅ SAFE FIELD EXTRACTION
@@ -421,13 +466,273 @@ class SettlementUploadController:
             for settlement in settlements:
                 ProfitCalculationService.calculate_order_profit( settlement.order, settlement )
 
+            # return {
+            #     "message": "Settlement uploaded successfully",
+            #     "created": len(created),
+            #     "updated": len(updated),
+            #     "skipped": skipped,
+            #     "skipped_details": skipped_details
+            # }
             return {
+                "success": True,
                 "message": "Settlement uploaded successfully",
-                "created": len(created),
-                "updated": len(updated),
-                "skipped": skipped,
+
+                "summary": {
+                    "rows_processed": len(df),
+
+                    "settlements_created": len(created),
+                    "settlements_updated": len(updated),
+
+                    "orders_created": orders_created,
+                    "products_created": products_created,
+                    "variants_created": variants_created,
+                    "customers_created": customers_created,
+
+                    "skipped": skipped
+                },
+
                 "skipped_details": skipped_details
             }
 
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
+        
+    @staticmethod
+    def get_or_create_order_from_settlement_row(
+        row,mapping,platform_obj,
+        current_user,
+        variants_cache,
+        orders_cache,
+        customer_cache
+    ):
+        from datetime import date
+
+        sub_order = normalize_sub_order(
+            row[mapping["sub_order_id"]]
+        )
+        # -----------------------------
+        # CREATION FLAGS
+        # -----------------------------
+        product_created = False
+        variant_created = False
+        customer_created = False
+        order_created = False
+
+        if sub_order in orders_cache:
+            return {
+                "order": orders_cache[sub_order],
+                "product_created": False,
+                "variant_created": False,
+                "customer_created": False,
+                "order_created": False,
+            }
+
+        # -----------------------------
+        # PRODUCT DATA FROM SETTLEMENT
+        # -----------------------------
+
+        catalog_id = SettlementUploadController.normalize_catalog_id(
+            row.get(mapping.get("catalog_id"))
+        )
+
+        quantity = int(
+            clean_number(
+                row.get(mapping.get("quantity"))
+            ) or 1
+        )
+
+        selling_price = clean_number(
+            row.get(mapping.get("listing_price"))
+        )
+
+        # -----------------------------
+        # CUSTOMER
+        # -----------------------------
+        customer = customer_cache.get("settlement_customer")
+        if not customer:
+            customer = Customer.objects.create(
+                name="Settlement Customer",
+                email=f"settlement_{uuid.uuid4().hex[:8]}@local.com",
+                phone=f"99999{uuid.uuid4().int % 100000}",
+                address="Auto Created",
+                state="Unknown",
+                pincode="000000",
+                created_by=current_user,
+                updated_by=current_user
+            )
+
+            customer_cache["settlement_customer"] = customer
+            customer_created = True
+
+        # -----------------------------
+        # PRODUCT
+        # -----------------------------
+        sku = str(
+                row.get(mapping.get("sku"), "")
+            ).strip().upper()
+        variant = ProductVariant.objects.select_related(
+                "product"
+            ).filter(
+                sku__iexact=sku
+            ).first()
+
+        product = variant.product if variant else None
+
+        product_name = str(
+                row.get(mapping.get("product_name"), "")
+            ).strip()
+
+        if not product:
+
+            if not product:
+
+                category = Category.objects.first()
+
+                product = Product.objects.create(
+                    catalog_id=catalog_id or str(uuid.uuid4().int)[:9],
+                    name=product_name or sku,
+                    category=category,
+                    platform=platform_obj,
+                    owner=current_user,
+                    created_by=current_user,
+                    updated_by=current_user,
+                    is_auto_created=True,
+                    requires_manual_review=True
+                )
+                product_created = True
+
+        # -----------------------------
+        # VARIANT
+        # -----------------------------
+        variant = variants_cache.get(sku.upper())
+
+        if not variant:
+            variant = ProductVariant.objects.select_related(
+                "product"
+            ).filter(
+                sku__iexact=sku
+            ).first()
+
+            if variant:
+                variants_cache[sku.upper()] = variant
+
+        if not variant:
+
+            variant = ProductVariant.objects.create(
+            product=product,
+            sku=sku,
+            size="DEFAULT",
+            color="DEFAULT",
+            cost_price=0,
+            selling_price=selling_price or 0,
+            stock=9999,
+            shipping_cost=0,
+            rto_cost=0,
+            is_auto_created=True,
+            requires_manual_review=True
+        )
+            variant_created = True
+
+
+        variants_cache[sku.upper()] = variant
+
+        # -----------------------------
+        # MARKETPLACE ORDER
+        # -----------------------------
+        # -----------------------------
+        # ORDER DATE
+        # -----------------------------
+        order_date = None
+
+        for field in ["order_date", "dispatch_date", "payment_date"]:
+
+            col = mapping.get(field)
+
+            if not col:
+                continue
+
+            dt = pd.to_datetime(
+                row.get(col),
+                errors="coerce"
+            )
+
+            if pd.notna(dt):
+                order_date = dt.date()
+                break
+
+        if not order_date:
+            order_date = timezone.now().date()
+        marketplace_order, _ = MarketplaceOrder.objects.get_or_create(
+            platform=platform_obj,
+            marketplace_order_id=sub_order,
+            defaults={
+                "customer": customer,
+                "order_date": order_date,
+                "created_by": current_user,
+                "updated_by": current_user
+            }
+        )
+        # -----------------------------
+        # UPDATE ORDER DATE IF CHANGED
+        # -----------------------------
+        if marketplace_order.order_date != order_date:
+            marketplace_order.order_date = order_date
+            marketplace_order.updated_by = current_user
+
+            marketplace_order.save(
+                update_fields=[
+                    "order_date",
+                    "updated_by",
+                    "updated_at"
+                ]
+            )
+
+        # -----------------------------
+        # STATUS
+        # -----------------------------
+        status = OrderStatus.objects.filter(
+            code="PLACED"
+        ).first()
+
+        if not status:
+            status = OrderStatus.objects.first()
+
+        # -----------------------------
+        # ORDER
+        # -----------------------------
+        order_created = True
+
+        order = Order.objects.create(
+            marketplace_order=marketplace_order,
+            marketplace_sub_order_id=sub_order,
+            product=product,
+            variant=variant,
+            quantity=quantity,
+            selling_price=selling_price,
+            cost_price_at_order=variant.cost_price or 0,
+            status=status,
+            payment_type="PREPAID",
+            created_by=current_user,
+            updated_by=current_user
+        )
+
+        orders_cache[sub_order] = order
+
+        return {
+            "order": order,
+            "product_created": product_created,
+            "variant_created": variant_created,
+            "customer_created": customer_created,
+            "order_created": order_created,
+        }
+    @staticmethod
+    def normalize_catalog_id(val):
+        if pd.isna(val):
+            return ""
+
+        val = str(val).strip()
+
+        if val.endswith(".0"):
+            val = val[:-2]
+
+        return val

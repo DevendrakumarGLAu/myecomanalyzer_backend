@@ -43,14 +43,14 @@ class ProductResponse(BaseModel):
     category_id: int
     category_name: str
     platform_code: Optional[str] = None
+    sku: Optional[str] = None
+    color: Optional[str] = None
+    cost_price: Optional[float] = None
+    selling_price: Optional[float] = None
+    stock: Optional[int] = None
     gst_percent: float = 0.0
     commission_percent: float = 0.0
     is_active: bool
-    sku:str
-    color: Optional[str] = None
-    cost_price: float
-    selling_price: float
-    stock: int
     variants: List[ProductVariantResponse]
 
     class Config:

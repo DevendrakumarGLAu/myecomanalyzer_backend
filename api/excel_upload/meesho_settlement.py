@@ -10,12 +10,41 @@ class MeeshoSettlementPlatform:
                     return v
             return None
 
+        # return {
+        #     "sub_order_id": find("sub order"),
+        #     "transaction_id": find("transaction"),
+        #     "payment_date": find("payment date"),
+        #     "final_settlement_amount": find("final settlement"),
+
+        #     "total_sale_amount": find("total sale amount"),
+        #     "total_return_amount": find("return amount"),
+
+        #     "live_status": find("live order status"),
+
+        #     "claims": find("claims"),
+        #     "compensation": find("compensation"),
+        #     "recovery": find("recovery"),
+
+        #     "fixed_fee": find("fixed fee"),
+        #     "warehousing_fee": find("warehousing"),
+        #     "return_premium": find("return premium (incl gst)"),
+        #     "return_premium_return": find("return premium (incl gst) of return"),
+
+        #     "gst_percent": find("product gst"),
+        # }
         return {
             "sub_order_id": find("sub order"),
             "transaction_id": find("transaction"),
             "payment_date": find("payment date"),
-            "final_settlement_amount": find("final settlement"),
+            "order_date": find("order date"),
+             "dispatch_date": find("dispatch date"),
+            "catalog_id": find("catalog"),
+            "product_name": find("product name"),
+            "sku": find("supplier sku"),
+            "quantity": find("quantity"),
+            "listing_price": find("listing price"),
 
+            "final_settlement_amount": find("final settlement"),
             "total_sale_amount": find("total sale amount"),
             "total_return_amount": find("return amount"),
 
@@ -27,6 +56,7 @@ class MeeshoSettlementPlatform:
 
             "fixed_fee": find("fixed fee"),
             "warehousing_fee": find("warehousing"),
+
             "return_premium": find("return premium (incl gst)"),
             "return_premium_return": find("return premium (incl gst) of return"),
 
