@@ -1105,23 +1105,56 @@ class InvoiceExtractController:
             )
 
         # --------------------------------------------------
-        # 4. Create or update variant
+        # 4. CREATE / UPDATE VARIANT
         # --------------------------------------------------
-        variant, created = ProductVariant.objects.get_or_create(
+        normalized_size = str(size).strip()
+        normalized_color = color.strip().upper()
+
+        # 1️⃣ First check if exact variant already exists
+        variant = ProductVariant.objects.filter(
             product=product,
-            sku=sku.strip(),
-            size=str(size).strip(),
-            color=color.strip().upper(),
-            defaults={
-                "selling_price": selling_price or 0,
-                 "cost_price": None,
-                "stock": 50,
-                "shipping_cost": shipping_cost or 150,
-                "rto_cost": rto_cost or 10,
-                "is_auto_created": True,
-                "requires_manual_review": True,
-            },
-        )
+            sku__iexact=sku.strip(),
+            size=normalized_size,
+            color__iexact=normalized_color
+        ).first()
+
+        if not variant:
+
+            # 2️⃣ Check DEFAULT variant
+            default_variant = ProductVariant.objects.filter(
+                product=product,
+                sku__iexact=sku.strip(),
+                size="DEFAULT",
+                color__iexact="DEFAULT"
+            ).first()
+
+            if default_variant:
+                # Replace DEFAULT values with actual values from PDF
+                default_variant.size = normalized_size
+                default_variant.color = normalized_color
+
+                if selling_price:
+                    default_variant.selling_price = selling_price
+
+                default_variant.save()
+
+                variant = default_variant
+
+            else:
+                # 3️⃣ Create new variant
+                variant = ProductVariant.objects.create(
+                    product=product,
+                    sku=sku.strip(),
+                    size=normalized_size,
+                    color=normalized_color,
+                    selling_price=selling_price or 0,
+                    cost_price=0,
+                    stock=50,
+                    shipping_cost=shipping_cost or 150,
+                    rto_cost=rto_cost or 10,
+                    is_auto_created=True,
+                    requires_manual_review=True,
+                )
 
         return product
     
