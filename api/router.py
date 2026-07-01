@@ -63,6 +63,10 @@ router.include_router(db_dump_router, prefix="/db", tags=["Database"])
 from api.v_1.apis_endpoint.csv_dump import router as db_csv_router
 router.include_router(db_csv_router, prefix="/db", tags=["Database"])
 
+# menifest
+from api.v_1.apis_endpoint.manifest_v1 import router as manifest_router
+router.include_router(manifest_router, prefix="/manifest", tags=["Menifest"])
+
 # F:\project\ecomm-profit\backend\api\v_1\apis_endpoint\marriage_biodata_v1.py
 # marriage
 
