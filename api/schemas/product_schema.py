@@ -26,6 +26,7 @@ class ProductVariantResponse(ProductVariantRequest):
 class ProductRequest(BaseModel):
     catalog_id: int
     name: str
+    image: Optional[str] = None
     category_id: int
     platform_code: Optional[str] = None
     gst_percent: float = 0.0
@@ -38,6 +39,7 @@ class ProductRequest(BaseModel):
     
 class ProductResponse(BaseModel):
     id: int
+    image: Optional[str] = None
     catalog_id: str
     name: str
     category_id: int
@@ -64,6 +66,7 @@ class PaginatedProductResponse(BaseModel):
     limit: int
     
 class ProductUpdateRequest(BaseModel):
+    image: Optional[str] = None
     catalog_id: Optional[str] = None
     name: Optional[str] = None
     category_id: Optional[int] = None

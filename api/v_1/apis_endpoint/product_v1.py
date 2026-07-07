@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException,Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from django.contrib.auth.models import User
 from typing import List, Optional
 from api.auth import get_current_user
 from api.schemas.product_schema import APIResponse, PaginatedProductResponse, ProductResponse, ProductRequest, ProductUpdateRequest
 from api.controllers.product_controller import ProductController
+from api.utils.s3_service import S3Service
 
 
 router = APIRouter()
@@ -103,3 +104,35 @@ def deactivate_product(
     current_user: User = Depends(get_current_user),
 ):
     return ProductController.deactivate_product(id, current_user)
+
+
+@router.post("/upload-image/", response_model=dict)
+async def upload_product_image(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Upload a product image to S3 (Supabase Storage).
+    Only allows common image types: JPEG, PNG, WEBP, GIF.
+    """
+    allowed_extensions = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+    import os
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid file type. Allowed types: {', '.join(allowed_extensions)}"
+        )
+
+    try:
+        urls = await S3Service.upload_file(file, folder=f"products/user_{current_user.id}")
+        return {
+            "status": True,
+            "message": "Image uploaded successfully",
+            "data": urls
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Upload failed: {str(e)}"
+        )

@@ -10,7 +10,8 @@ from products.models import Product, ProductVariant, CostPriceUpdateHistory
 from fastapi import HTTPException
 from api.schemas.product_schema import ProductRequest, ProductResponse, ProductUpdateRequest, ProductVariantResponse
 from django.db.models import Q
-from django.db import connection, transaction
+from django.db import transaction
+import os
 
 class ProductController:
 
@@ -97,6 +98,7 @@ class ProductController:
                         id=p.id,
                         catalog_id=p.catalog_id,
                         name=p.name,
+                        image=ProductController.get_image_url(p.image) if p.image else None,
                         category_id=p.category_id,
                         category_name=category_name,   # added category name
                         sku=sku,                  # added SKU
@@ -143,6 +145,7 @@ class ProductController:
                 product = Product.objects.create(
                     catalog_id=payload.catalog_id,
                     name=payload.name,
+                    image=payload.image,
                     category_id=payload.category_id,
                     platform=platform_obj,
                     owner=current_user,
@@ -325,7 +328,9 @@ class ProductController:
         # -----------------------
         # Update Product
         # -----------------------
-
+        if payload.image is not None:
+            product.image = payload.image
+            
         if payload.catalog_id is not None:
             product.catalog_id = payload.catalog_id
 
@@ -600,3 +605,12 @@ class ProductController:
             "status": True,
             "message": "Product deactivated successfully"
         }
+
+    def get_image_url(file_key):
+        if not file_key:
+            return None
+
+        project_url = os.getenv("SUPABASE_PROJECT_URL")
+        bucket_name = os.getenv("SUPABASE_S3_BUCKET_NAME")
+
+        return f"{project_url}/storage/v1/object/public/{bucket_name}/{file_key}"
