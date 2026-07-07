@@ -11,6 +11,7 @@ class Product(BaseModel):
     name = models.CharField(max_length=255)
     category = models.ForeignKey(Category, on_delete=models.CASCADE)
     platform = models.ForeignKey(Platform,on_delete=models.CASCADE, related_name="products" )
+    image = models.URLField(max_length=1000, blank=True, null=True) 
     gst_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     commission_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     owner = models.ForeignKey(User, on_delete=models.CASCADE)

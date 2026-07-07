@@ -147,8 +147,9 @@ DATABASES = {
         'USER': os.environ.get('DB_USER'),
         'PASSWORD': os.environ.get('DB_PASSWORD'),
         'HOST': os.environ.get('DB_HOST'),
-        'PORT': os.getenv('DB_PORT')
-       
+        'PORT': os.getenv('DB_PORT'),
+        'CONN_MAX_AGE': 600,
+        'CONN_HEALTH_CHECKS': True,
     }
 }
 
@@ -315,3 +316,10 @@ LOGGING = {
         },
     },
 }
+
+# Supabase S3 Storage Configuration
+SUPABASE_S3_ENDPOINT_URL = os.environ.get("SUPABASE_S3_ENDPOINT_URL", "https://rmjipqwaimxoyqownkyg.storage.supabase.co/storage/v1/s3")
+SUPABASE_S3_ACCESS_KEY_ID = os.environ.get("SUPABASE_S3_ACCESS_KEY_ID", "")
+SUPABASE_S3_SECRET_ACCESS_KEY = os.environ.get("SUPABASE_S3_SECRET_ACCESS_KEY", "")
+SUPABASE_S3_REGION = os.environ.get("SUPABASE_S3_REGION", "ap-south-1")
+SUPABASE_S3_BUCKET_NAME = os.environ.get("SUPABASE_S3_BUCKET_NAME", "products")
