@@ -10,11 +10,12 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "core.settings")
 django.setup()
 
 # 3️⃣ Now import FastAPI and routers
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi import APIRouter
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from api.router import router as api_v1_router, ai_router
 from fastapi.middleware.cors import CORSMiddleware
+from django.db import close_old_connections
 # F:\project\ecomm-profit\backend\api\router.py
 
 # Security scheme for Swagger
@@ -30,6 +31,15 @@ app = FastAPI(
         "displayRequestDuration": True,
     }
 )
+
+@app.middleware("http")
+async def db_session_middleware(request: Request, call_next):
+    close_old_connections()
+    try:
+        response = await call_next(request)
+        return response
+    finally:
+        close_old_connections()
 
 @app.get("/test")
 def test_token(

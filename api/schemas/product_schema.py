@@ -9,7 +9,7 @@ class ProductVariantRequest(BaseModel):
     sku: str
     size: Optional[str] = None
     color: Optional[str] = None
-    cost_price: float
+    cost_price: Optional[float] = None
     effective_from: Optional[date] = None
     selling_price: float
     stock: int
