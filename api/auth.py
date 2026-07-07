@@ -166,7 +166,11 @@ async def get_current_user_optional(
         return None
 
     try:
-        user = await get_current_user(authorization)
+        if not authorization.startswith("Bearer "):
+            return None
+        token = authorization.split(" ", 1)[1]
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+        user = await get_current_user(credentials)
         return user
-    except HTTPException:
+    except Exception:
         return None

@@ -967,12 +967,11 @@ class InvoiceExtractController:
     @staticmethod
     def extract_product_description(text: str):
         import re
-
-        # Get the Description section only
+        # Extract product section
         match = re.search(
             r"Description\s+HSN\s+Qty\s+Gross Amount\s+Discount\s+Taxable Value\s+Taxes\s+Total(.*?)(?:Other Charges|Total\s+Rs\.)",
             text,
-            re.DOTALL | re.IGNORECASE,
+            flags=re.DOTALL | re.IGNORECASE,
         )
 
         if not match:
@@ -980,43 +979,45 @@ class InvoiceExtractController:
 
         desc = match.group(1)
 
-        # Remove tax labels like SGST/CGST/IGST and their values
+        # Join wrapped lines
+        desc = desc.replace("\n", " ")
+
+        # Remove tax labels
         desc = re.sub(
-            r"(SGST|CGST|IGST)\s*@\s*[\d.]+%?\s*:?\s*Rs\.\d+\.\d+",
+            r"(IGST|CGST|SGST)\s*@\s*[\d.]+%",
             " ",
             desc,
             flags=re.IGNORECASE,
         )
 
-        # Remove HSN code
-        desc = re.sub(r"\b7018\b", " ", desc)
+        # Remove all Rs. amounts
+        desc = re.sub(r"Rs\.\d+(?:\.\d+)?", " ", desc)
 
-        # Remove quantity
-        desc = re.sub(r"\b1\b", " ", desc)
+        # Remove HSN codes (4-8 digits)
+        desc = re.sub(r"\b\d{4,8}\b", " ", desc)
 
-        # Remove all monetary values
-        desc = re.sub(r"Rs\.\d+\.\d+", " ", desc)
+        # Remove quantity only when it appears after HSN
+        # (Don't remove numbers like "Pack of 2 Hands")
 
-        # Remove trailing size like "- 2.4"
-        desc = re.sub(r"-\s*\d+(\.\d+)?\s*$", "", desc)
+        # Remove trailing size like "- 2.6", "- 2.8", etc.
+        desc = re.sub(r"\s*-\s*\d+(?:\.\d+)?(?=\s|$)", "", desc)
 
-        # Collapse whitespace
+        # Remove extra spaces
         desc = re.sub(r"\s+", " ", desc).strip()
 
         return desc
     
     @staticmethod
     def normalize_product_name(name: str):
-        import re
         if not name:
             return ""
 
         name = name.lower().strip()
 
-        # remove ending size like "- 2.4"
+        # Remove ending size
         name = re.sub(r"\s*-\s*\d+(\.\d+)?$", "", name)
 
-        # remove multiple spaces
+        # Remove extra spaces
         name = re.sub(r"\s+", " ", name)
 
         return name
