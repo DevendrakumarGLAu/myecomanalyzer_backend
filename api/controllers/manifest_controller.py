@@ -1,7 +1,7 @@
 from collections import defaultdict
 from datetime import datetime
 
-from django.db.models import Q, Sum
+from django.db.models import Count, Q, Sum
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 
@@ -72,6 +72,38 @@ class ManifestController:
                 | Q(delivery_partner__name__icontains=search)
             )
 
+        # -----------------------------
+        # SKU-wise summary (across all delivery partners, for the whole
+        # date+platform match — not paginated, it's a packing summary rather
+        # than the partner-wise listing below).
+        # -----------------------------
+        sku_wise = list(
+            queryset
+            .values(
+                "product__name",
+                "variant__sku",
+                "variant__size",
+                "variant__color",
+            )
+            .annotate(
+                quantity=Sum("quantity"),
+                delivery_partner_count=Count("delivery_partner", distinct=True),
+            )
+            .order_by("variant__sku", "variant__size")
+        )
+
+        sku_wise = [
+            {
+                "sku": row["variant__sku"],
+                "product_name": row["product__name"],
+                "size": row["variant__size"],
+                "color": row["variant__color"],
+                "quantity": row["quantity"],
+                "delivery_partner_count": row["delivery_partner_count"],
+            }
+            for row in sku_wise
+        ]
+
         queryset = (
             queryset.values(
                 "delivery_partner__name",
@@ -138,4 +170,5 @@ class ManifestController:
             "delivery_partner_count": len(response),
             "total_quantity": total_quantity,
             "data": response,
+            "sku_wise": sku_wise,
         }

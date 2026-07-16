@@ -98,17 +98,34 @@ class InvoiceExtractController:
             if marketplace_sub_order_id in line:
                 # Example line:
                 # 0O0-Z_wu 2.2 1 Pink 259318205301888448_1
+                #
+                # SKU and color can each be multiple words (e.g. "green bangles",
+                # "Rose Gold"), so a fixed parts[0]/parts[1]/... split misaligns
+                # every field once that happens. Anchor instead on the two tokens
+                # that are unambiguous: the trailing order-id token (the value we
+                # already matched above) and the quantity token, which is always a
+                # bare integer — sizes here always carry a decimal (e.g. "2.2"), so
+                # they never get mistaken for it.
 
                 parts = line.split()
 
-                if len(parts) < 5:
+                order_id_idx = next(
+                    (i for i, p in enumerate(parts) if marketplace_sub_order_id in p),
+                    len(parts) - 1,
+                )
+                row = parts[:order_id_idx]
+
+                qty_idx = next((i for i, p in enumerate(row) if p.isdigit()), None)
+                if qty_idx is None or qty_idx < 1:
                     continue
 
-                sku = parts[0]
-                size = parts[1]
-                quantity = int(parts[2]) if parts[2].isdigit() else 1
-                color = parts[3]
-                order_id = parts[4]
+                sku = " ".join(row[:qty_idx - 1])
+                size = row[qty_idx - 1]
+                quantity = int(row[qty_idx])
+                color = " ".join(row[qty_idx + 1:])
+
+                if not sku or not size or not color:
+                    continue
 
                 return sku, size, quantity, color
 
@@ -1061,35 +1078,36 @@ class InvoiceExtractController:
         if not catalog_value:
             catalog_value = str(uuid.uuid4().int)[:9]
 
-        # 2. Find by normalized name
+        category = Category.objects.first()
+        color = color.strip().upper() if color else ""
+        size = str(size).strip() if size else ""
+        sku = sku.strip()
+
+        # 2. Find by SKU — any existing variant with this SKU belongs to the same
+        # product even if its size/color differs from this invoice row. Without
+        # this, a new size for an already-known SKU had no way to be matched back
+        # to its product (catalog_id is never populated by the PDF import, and the
+        # name-match below only hits if the extracted description normalizes
+        # identically every time), so it fell through to creating a duplicate
+        # product instead of a new variant.
+        if not product and sku:
+            existing_variant = (
+                ProductVariant.objects.select_related("product")
+                .filter(sku__iexact=sku, product__owner=owner, product__platform=platform)
+                .first()
+            )
+            if existing_variant:
+                product = existing_variant.product
+
+        # 3. Find by normalized name (fallback when this SKU hasn't been seen yet)
         if not product and description:
             normalized = InvoiceExtractController.normalize_product_name(description)
             for p in Product.objects.filter(owner=owner, platform=platform):
                 if InvoiceExtractController.normalize_product_name(p.name) == normalized:
                     product = p
                     break
-        # 3. Find by existing variant
-        category = Category.objects.first()
-        color = color.strip().upper() if color else ""
-        size = str(size).strip() if size else ""
-        sku = sku.strip()
-        
-        # 4. Create only if still not found
-        
-        # 3. Find by existing variant (only if product not already found)
-        if not product:
-            existing_variant = (
-                ProductVariant.objects.select_related("product")
-                .filter(
-                    sku__iexact=sku.strip(),
-                    size=str(size).strip(),
-                    color__iexact=color.strip(),
-                )
-                .first()
-            )
 
-            if existing_variant:
-                product = existing_variant.product
+        # 4. Create only if still not found
         if not product:
             product = Product.objects.create(
                 catalog_id = catalog_value,

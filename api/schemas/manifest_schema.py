@@ -18,8 +18,19 @@ class DeliveryPartnerManifestResponse(BaseModel):
     total_products: int
     items: List[ManifestItemResponse]
 
+
+class SkuManifestItemResponse(BaseModel):
+    sku: str
+    product_name: str
+    size: str
+    color: str
+    quantity: int
+    delivery_partner_count: int
+
+
 class ManifestResponse(BaseModel):
     manifest_date: date
     total_quantity: int
     delivery_partner_count: int
     data: List[DeliveryPartnerManifestResponse]
+    sku_wise: List[SkuManifestItemResponse]

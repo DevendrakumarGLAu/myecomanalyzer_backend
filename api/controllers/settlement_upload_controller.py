@@ -17,6 +17,7 @@ from payments.models import OrderSettlement
 from orders_status.models import OrderStatus
 from platforms.models import Platform
 from products.models import Product, ProductVariant
+from api.controllers.pdf_import_controlller import InvoiceExtractController
 
 
 def clean_number(value):
@@ -567,9 +568,17 @@ class SettlementUploadController:
         # -----------------------------
         # PRODUCT
         # -----------------------------
+        # Keep the marketplace's original casing for storage — DB lookups below
+        # use sku__iexact so they stay case-insensitive without forcing this.
         sku = str(
                 row.get(mapping.get("sku"), "")
-            ).strip().upper()
+            ).strip()
+        sku_key = sku.upper()  # in-memory variants_cache key only, never stored
+        product_name = str(
+                row.get(mapping.get("product_name"), "")
+            ).strip()
+
+        # 1. Find by an existing variant with this exact SKU
         variant = ProductVariant.objects.select_related(
                 "product"
             ).filter(
@@ -578,33 +587,45 @@ class SettlementUploadController:
 
         product = variant.product if variant else None
 
-        product_name = str(
-                row.get(mapping.get("product_name"), "")
-            ).strip()
+        # 2. Find by catalog id — the same product can show up under a new SKU
+        if not product and catalog_id:
+            product = Product.objects.filter(
+                owner=current_user,
+                catalog_id=catalog_id
+            ).first()
 
+        # 3. Find by normalized product name — without this, a product arriving
+        # with both a new SKU and no matching catalog_id had no way to be matched
+        # back to the product already created for it, so it was recreated as a
+        # duplicate product every time instead of getting a new variant/SKU.
+        if not product and product_name:
+            normalized = InvoiceExtractController.normalize_product_name(product_name)
+            for p in Product.objects.filter(owner=current_user, platform=platform_obj):
+                if InvoiceExtractController.normalize_product_name(p.name) == normalized:
+                    product = p
+                    break
+
+        # 4. Create only if still not found
         if not product:
+            category = Category.objects.first()
 
-            if not product:
-
-                category = Category.objects.first()
-
-                product = Product.objects.create(
-                    catalog_id=catalog_id or str(uuid.uuid4().int)[:9],
-                    name=product_name or sku,
-                    category=category,
-                    platform=platform_obj,
-                    owner=current_user,
-                    created_by=current_user,
-                    updated_by=current_user,
-                    is_auto_created=True,
-                    requires_manual_review=True
-                )
-                product_created = True
+            product = Product.objects.create(
+                catalog_id=catalog_id or str(uuid.uuid4().int)[:9],
+                name=product_name or sku,
+                category=category,
+                platform=platform_obj,
+                owner=current_user,
+                created_by=current_user,
+                updated_by=current_user,
+                is_auto_created=True,
+                requires_manual_review=True
+            )
+            product_created = True
 
         # -----------------------------
         # VARIANT
         # -----------------------------
-        variant = variants_cache.get(sku.upper())
+        variant = variants_cache.get(sku_key)
 
         if not variant:
             variant = ProductVariant.objects.select_related(
@@ -614,7 +635,7 @@ class SettlementUploadController:
             ).first()
 
             if variant:
-                variants_cache[sku.upper()] = variant
+                variants_cache[sku_key] = variant
 
         if not variant:
 
@@ -634,7 +655,7 @@ class SettlementUploadController:
             variant_created = True
 
 
-        variants_cache[sku.upper()] = variant
+        variants_cache[sku_key] = variant
 
         # -----------------------------
         # MARKETPLACE ORDER

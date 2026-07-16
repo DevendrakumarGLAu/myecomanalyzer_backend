@@ -188,6 +188,56 @@ class CaptchaChallenge(models.Model):
         self.save(update_fields=["used"])
 
 
+class PasswordResetOTP(models.Model):
+    """
+    OTP-based forgot-password flow, sent via either email or SMS.
+
+    Flow: request_otp() creates a row + sends the OTP -> verify_otp() checks it
+    and, on success, issues a second secret (reset_token) -> reset_password()
+    checks the reset_token and sets the new password. The OTP itself is never
+    valid again after verification, and the reset_token is never valid again
+    after a successful reset.
+    """
+    CHANNEL_CHOICES = [("email", "Email"), ("sms", "SMS")]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="password_reset_otps")
+    channel = models.CharField(max_length=10, choices=CHANNEL_CHOICES)
+    # The email address or mobile number the OTP was actually sent to (not
+    # necessarily identical to user.email — kept so SMS OTPs can target
+    # UserProfile.mobile_number without a join at verify time).
+    identifier = models.CharField(max_length=255)
+
+    otp_hash = models.CharField(max_length=255)
+    reset_token_hash = models.CharField(max_length=255, null=True, blank=True)
+
+    expires_at = models.DateTimeField()
+    reset_token_expires_at = models.DateTimeField(null=True, blank=True)
+
+    is_verified = models.BooleanField(default=False)
+    is_used = models.BooleanField(default=False)
+    attempts = models.IntegerField(default=0)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "password_reset_otps"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["channel", "identifier", "is_used"]),
+            models.Index(fields=["expires_at"]),
+        ]
+
+    def __str__(self):
+        return f"PasswordResetOTP({self.channel}:{self.identifier}) for {self.user.username}"
+
+    def is_expired(self):
+        return timezone.now() > self.expires_at
+
+    def is_reset_token_expired(self):
+        return not self.reset_token_expires_at or timezone.now() > self.reset_token_expires_at
+
+
 class SessionLog(models.Model):
     """
     Log all authentication events for security monitoring and auditing.
