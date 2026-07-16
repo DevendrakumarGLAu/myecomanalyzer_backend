@@ -26,6 +26,10 @@ router.include_router(auth_router, prefix="/auth", tags=["Auth"])
 router.include_router(signup.router)   # /api/v1/auth/signup (deprecated, use /auth/signup)
 router.include_router(login.router)    # /api/v1/auth/login (deprecated, use /auth/login)
 
+# forgot password (OTP via email or SMS)
+from api.password_reset_endpoints import router as password_reset_router
+router.include_router(password_reset_router)  # already prefixed /auth internally -> /api/v1/auth/forgot-password, etc.
+
 # category
 from api.v_1.apis_endpoint.categories_v1 import router as category_router
 router.include_router(category_router, prefix="/categories", tags=["Categories"])
@@ -53,6 +57,10 @@ router.include_router(settlement_router, prefix="/upload", tags=["Settlements"])
 # dashboard
 from api.v_1.apis_endpoint.dashboard_v1 import router as dashboard_router
 router.include_router(dashboard_router, prefix="/dashboard", tags=["Dashboard"])
+
+# payments
+from api.v_1.apis_endpoint.payment_v1 import router as payment_router
+router.include_router(payment_router, prefix="/payments", tags=["Payments"])
 
 
 # db dump

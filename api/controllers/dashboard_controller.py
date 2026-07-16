@@ -237,13 +237,9 @@ class DashboardController:
             # ADS SPEND
             # ----------------------------
             ads_query = AdsSpend.objects.filter(
-                platform__isnull=False
+                platform__isnull=False,
+                created_by=current_user
             )
-
-            if current_user:
-                ads_query = ads_query.filter(
-                    platform__products__owner=current_user
-                ).distinct()
 
             if platform_id:
                 ads_query = ads_query.filter(
