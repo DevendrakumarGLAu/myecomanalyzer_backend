@@ -43,21 +43,30 @@ class MarriageAuthController:
             raise HTTPException(status_code=500, detail=str(e))
 
     def login_user(payload):
+        generic_error = HTTPException(status_code=401, detail="Invalid email or password")
+
         try:
             user = MarriageUser.objects.get(email=payload.username)
         except MarriageUser.DoesNotExist:
-            raise HTTPException(status_code=404, detail="User not found")
-        try:
-            if not bcrypt.checkpw(payload.password.encode(), user.password.encode()):
-                raise HTTPException(status_code=401, detail="Invalid password")
+            # Same error as a wrong password below — a distinct "not found"
+            # response here would let a caller enumerate registered emails.
+            raise generic_error
 
-            access_token = TokenManager.create_access_token({"sub": user.email})
-            return {
-                "message": "Login success",
-                "access_token": access_token,
-                "token_type": "bearer",
-                "user_id": user.id
-            }
+        if not bcrypt.checkpw(payload.password.encode(), user.password.encode()):
+            raise generic_error
+
+        try:
+            # create_access_token(user_id, username, ...) — the previous call
+            # passed a single dict as user_id with username missing entirely,
+            # which raises TypeError on every login attempt.
+            access_token = TokenManager.create_access_token(user.id, user.email)
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
+
+        return {
+            "message": "Login success",
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user_id": user.id
+        }
         

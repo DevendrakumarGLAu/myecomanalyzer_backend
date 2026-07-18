@@ -40,3 +40,4 @@ __pycache__/
 core/__init__.py
 
 .env
+backups/*.sql

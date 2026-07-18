@@ -1,14 +1,19 @@
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+import os
+
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
 import mysql.connector
 import pandas as pd
 import io
+from api.auth import require_staff_user
 from api.v_1.apis_endpoint.file_validation import validate_file_extension
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_staff_user)])
 
-DB_HOST = "localhost"
-DB_USER = "root"
-DB_PASSWORD = "mysql"
+# No insecure fallback defaults — this previously hardcoded root MySQL
+# credentials directly in source.
+DB_HOST = os.getenv("CSV_MYSQL_HOST", "localhost")
+DB_USER = os.getenv("CSV_MYSQL_USER")
+DB_PASSWORD = os.getenv("CSV_MYSQL_PASSWORD")
 
 def map_dtype_to_mysql(dtype, sample_value=None):
     if pd.api.types.is_integer_dtype(dtype):
@@ -34,6 +39,9 @@ async def upload_csv(
     file: UploadFile = File(...)
 ):
     try:
+        if not DB_USER or not DB_PASSWORD:
+            raise HTTPException(status_code=500, detail="CSV_MYSQL_USER/CSV_MYSQL_PASSWORD are not configured")
+
         # Validate DB/table names
         if not db_name.isidentifier():
             raise HTTPException(status_code=400, detail="Invalid database name")
@@ -46,6 +54,14 @@ async def upload_csv(
         content = await file.read()
         df = pd.read_csv(io.BytesIO(content))
         df.columns = [col.strip() for col in df.columns]
+
+        # Column names get interpolated directly into CREATE TABLE/INSERT below —
+        # validate them the same way table_name/db_name are validated above,
+        # since a crafted header (e.g. containing a backtick) could otherwise
+        # break out of the identifier quoting.
+        for col in df.columns:
+            if not col.isidentifier() or len(col) > 64:
+                raise HTTPException(status_code=400, detail=f"Invalid column name: {col}")
 
         # Replace NaN with None for MySQL
         df = df.where(pd.notnull(df), None)

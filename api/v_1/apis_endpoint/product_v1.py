@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from django.contrib.auth.models import User
 from typing import List, Optional
 from api.auth import get_current_user
-from api.schemas.product_schema import APIResponse, PaginatedProductResponse, ProductResponse, ProductRequest, ProductUpdateRequest
+from api.schemas.product_schema import APIResponse, PaginatedProductResponse, ProductResponse, ProductRequest, ProductUpdateRequest, ToggleProductResponse
 from api.controllers.product_controller import ProductController
 from api.utils.s3_service import S3Service
 
@@ -20,10 +20,11 @@ def get_products(
     limit: int = Query(10, ge=1),
     search: Optional[str] = None,
     platform: Optional[str] = None,
+    status: str = Query("all", pattern="^(active|paused|all)$", description="Filter for the Active/Paused tabs"),
+    sort_by: Optional[str] = Query(None,pattern="^(stock_asc|stock_desc)$", description="Sort by stock"),
 ):
     try:
-        return controller.get_all_products(current_user, page, limit, search, platform)
-        # return controller.get_all_products(current_user, page=page, limit=limit, search=search)
+        return controller.get_all_products(current_user, page, limit, search, platform, status,sort_by)
     except Exception as e:
         # Handle and log the error
         raise HTTPException(status_code=500, detail=str(e))
@@ -89,13 +90,13 @@ def delete_product(product_id: int, current_user: User = Depends(get_current_use
     return ProductController.delete_product_logic(product_id, current_user)
 
 
-@router.post("/toggle_active/{product_id}", response_model=ProductResponse)
+@router.post("/toggle_active/{product_id}", response_model=ToggleProductResponse)
 def toggle_product_active(product_id: int, current_user: User = Depends(get_current_user)):
     return ProductController.toggle_product_active_logic(product_id, current_user)
 
 @router.delete("/del_products/{product_id}")
-def delete_product(product_id: int):
-    return ProductController.delete_product(product_id)
+def delete_product(product_id: int, current_user: User = Depends(get_current_user)):
+    return ProductController.delete_product(product_id, current_user)
 
 # product deactivate
 @router.patch("/deactivate")

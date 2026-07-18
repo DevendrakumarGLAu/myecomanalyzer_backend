@@ -1,5 +1,6 @@
 from typing import Optional
 from django.contrib.auth.models import User
+from django.conf import settings
 from api.controllers.pagination_controller import Pagination
 from customers.models import Customer
 from marketplace.models import MarketplaceOrder
@@ -18,13 +19,18 @@ class ProductController:
     @staticmethod
     def get_product_by_id(product_id: int, current_user: User):
         """
-        Fetch single product for current user
-        Return None if not found
+        Fetch single product for current user (active or inactive).
+        Return None if not found.
+
+        No is_active filter here — this is also used by
+        toggle_product_active_logic to flip an inactive product back to
+        active, which would always 404 if this only matched active ones.
+        Ownership (owner=current_user) is the real security boundary, not
+        active status.
         """
         product = Product.objects.filter(
-            id=product_id, 
+            id=product_id,
             owner=current_user,
-            is_active=True
         ).select_related("category", "platform").prefetch_related("variants").first()
 
         if not product:
@@ -38,13 +44,21 @@ class ProductController:
         page: int = 1,
         limit: int = 10,
         search: Optional[str] = None,
-        platform: Optional[int] = None
+        platform: Optional[int] = None,
+        status: str = "all",
+        sort_by: Optional[str] = None,
     ):
         try:
+            # status feeds the Active/Paused tabs on the admin table — each
+            # tab requests its own filtered, paginated list rather than
+            # splitting one mixed page client-side.
             filters = {
                 "owner": current_user,
-                "is_active": True
             }
+            if status == "active":
+                filters["is_active"] = True
+            elif status == "paused":
+                filters["is_active"] = False
             if platform:
                 filters["platform__code"] = platform
             query = (
@@ -65,6 +79,11 @@ class ProductController:
                 )
                 .order_by("-id")
             )
+    
+            if sort_by == "stock_asc":
+                query = query.order_by("variants__stock")
+            elif sort_by == "stock_desc":
+                query = query.order_by("-variants__stock")
 
             if search:
                 variant_product_ids = ProductVariant.objects.filter(
@@ -145,7 +164,7 @@ class ProductController:
                 product = Product.objects.create(
                     catalog_id=payload.catalog_id,
                     name=payload.name,
-                    image=payload.image,
+                    image=ProductController.normalize_image_key(payload.image),
                     category_id=payload.category_id,
                     platform=platform_obj,
                     owner=current_user,
@@ -185,124 +204,18 @@ class ProductController:
                 detail=f"Error while creating product: {str(e)}"
             )
 
+    @staticmethod
+    def normalize_image_key(image):
+        if not image:
+            return None
 
-    # @staticmethod
-    # def update_product_logic(product_id: int, payload: ProductUpdateRequest, current_user: User):
-    #     """
-    #     Update product and its variants. Variants are replaced if provided.
-    #     """
-    #     try:
-    #         product = ProductController.get_product_by_id(product_id, current_user)
-    #         if not product:
-    #             raise HTTPException(status_code=404, detail="Product not found")
+        marker = f"/storage/v1/object/public/{settings.SUPABASE_S3_BUCKET_NAME}/"
 
-    #         update_data = payload.dict(exclude_unset=True)
-           
+        if marker in image:
+            return image.split(marker, 1)[1]
 
-    #         # --- Update Product fields ---
-    #         for field, value in update_data.items():
-    #             if field != "variants":
-    #                 if field == "marketplace":
-    #                     setattr(product, "platform_id", value)
-    #                 else:
-    #                     setattr(product, field, value)
+        return image
 
-            
-    #         if "platform_code" in update_data:
-    #             platform_obj = Platform.objects.filter(code=update_data["platform_code"]).first()
-    #             product.platform = platform_obj
-    #         product.updated_by = current_user
-    #         product.is_auto_created = False
-    #         product.requires_manual_review = False
-    #         product.save()
-
-    #         # --- Update Variants if provided ---
-    #         if "variants" in update_data:
-                
-    #             existing_variants = {v.id: v for v in product.variants.all()}
-    #             incoming_variants = payload.variants or []
-    #             incoming_ids = []
-    #             for variant_data in incoming_variants:
-    #                 variant_id = variant_data.id
-
-    #                 if variant_id and variant_id in existing_variants:
-    #                     # Update existing variant
-    #                     variant = existing_variants[variant_id]
-    #                     old_cost_price = variant.cost_price
-    #                     variant.sku = variant_data.sku
-    #                     variant.size = variant_data.size
-    #                     variant.color = variant_data.color
-    #                     variant.cost_price = variant_data.cost_price
-    #                     variant.selling_price = variant_data.selling_price
-    #                     variant.stock = variant_data.stock
-    #                     variant.shipping_cost = variant_data.shipping_cost or 0.0
-    #                     variant.rto_cost = variant_data.rto_cost or 0.0
-    #                     if old_cost_price != variant_data.cost_price:
-    #                         CostPriceUpdateHistory.objects.create(
-    #                             variant=variant,
-    #                             old_cost_price=old_cost_price,
-    #                             new_cost_price=variant_data.cost_price,
-    #                             updated_by=current_user
-    #                         )
-    #                     variant.is_auto_created = False
-    #                     variant.requires_manual_review = False
-    #                     variant.save()
-    #                     incoming_ids.append(variant_id)
-    #                 else:
-    #                     ProductVariant.objects.update_or_create(
-    #                         product=product,
-    #                         sku=variant_data.sku,
-    #                         size=variant_data.size,
-    #                         color=variant_data.color,
-    #                         defaults={
-    #                             "cost_price": variant_data.cost_price,
-    #                             "selling_price": variant_data.selling_price,
-    #                             "stock": variant_data.stock,
-    #                             "shipping_cost": variant_data.shipping_cost or 0,
-    #                             "rto_cost": variant_data.rto_cost or 0,
-    #                             "is_auto_created": False,
-    #                             "requires_manual_review": False,
-    #                         }
-    #                     )
-
-    #         # Prefetch variants for response
-    #         product = Product.objects.prefetch_related("variants").get(id=product.id)
-    #         sku = product.variants.first().sku if product.variants.exists() else None
-    #         category_name = product.category.name if product.category else None
-    #         color= product.variants.first().color if product.variants.exists() else None
-    #         cost_price = product.variants.first().cost_price if product.variants.exists() else None
-    #         selling_price = product.variants.first().selling_price if product.variants.exists() else None
-    #         stock = product.variants.first().stock if product.variants.exists() else None
-    #         catalog_id = product.catalog_id if product.catalog_id else None
-    #         platform_code = product.platform.code if product.platform else None
-    #         # Convert to Pydantic schema
-    #         product_response = ProductResponse(
-    #                 id=product.id,
-    #                 catalog_id=product.catalog_id,
-    #                 name=product.name,
-    #                 category_id=product.category_id,
-    #                 category_name=category_name,  # ✅ ADD THIS
-    #                 platform_code=product.platform.code if product.platform else None,  # ✅ also fix this
-    #                 gst_percent=float(product.gst_percent),
-    #                 commission_percent=float(product.commission_percent),
-    #                 sku=sku,
-    #                 color=color,
-    #                 cost_price=cost_price,
-    #                 selling_price=selling_price,
-    #                 stock=stock,
-    #                 is_active=product.is_active,
-    #                 variants=[
-    #                     ProductVariantResponse.model_validate(v)
-    #                     for v in product.variants.all()
-    #                 ]
-    #             )
-    #         return product_response
-
-    #     except Exception as e:
-    #         raise HTTPException(
-    #             status_code=500,
-    #             detail=f"Error while updating product: {str(e)}"
-    #         )
     @staticmethod
     def update_product_logic(
         product_id: int,
@@ -329,7 +242,7 @@ class ProductController:
         # Update Product
         # -----------------------
         if payload.image is not None:
-            product.image = payload.image
+            product.image = ProductController.normalize_image_key(payload.image)
             
         if payload.catalog_id is not None:
             product.catalog_id = payload.catalog_id
@@ -498,6 +411,8 @@ class ProductController:
         Soft delete product for current user
         """
         product = ProductController.get_product_by_id(product_id, current_user)
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
         product.soft_delete(user=current_user)  # uses BaseModel soft_delete
         return {"status": "success", "deleted_at": product.deleted_at}
 
@@ -507,10 +422,17 @@ class ProductController:
         Toggle active/inactive status of a product
         """
         product = ProductController.get_product_by_id(product_id, current_user)
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
         product.is_active = not product.is_active
         product.updated_by = current_user
         product.save()
-        return product
+        return {
+            "status": "success",
+            "is_active": product.is_active,
+            "message": f"Product {'activated' if product.is_active else 'deactivated'} successfully"
+        }
+        # return product
 
     def build_product_response(product):
         product = Product.objects.prefetch_related(
@@ -545,7 +467,14 @@ class ProductController:
         )
         
     @staticmethod
-    def delete_product(product_id: int):
+    def delete_product(product_id: int, current_user: User):
+        # Ownership check — this is a hard/permanent delete (unlike
+        # delete_product_logic's soft delete above), so it must never operate
+        # on another tenant's product.
+        owned = Product.objects.filter(id=product_id, owner=current_user).exists()
+        if not owned:
+            raise HTTPException(status_code=404, detail="Product not found")
+
         with transaction.atomic():
             OrderSettlement.objects.filter(
                 order__product_id=product_id
@@ -609,7 +538,8 @@ class ProductController:
     def get_image_url(file_key):
         if not file_key:
             return None
-
+        # print("Image from DB:", file_key)
+        # print("Generated URL:", ProductController.get_image_url(file_key))
         project_url = os.getenv("SUPABASE_PROJECT_URL")
         bucket_name = os.getenv("SUPABASE_S3_BUCKET_NAME")
 
