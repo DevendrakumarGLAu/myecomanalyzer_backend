@@ -285,7 +285,7 @@ class ProductController:
 
             for item in payload.variants:
 
-                sku = item.sku.strip().upper()
+                sku = item.sku.strip()
                 size = item.size.strip() if item.size else None
                 color = item.color.strip().upper() if item.color else None
 

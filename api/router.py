@@ -29,6 +29,10 @@ router.include_router(auth_router, prefix="/auth", tags=["Auth"])
 from api.password_reset_endpoints import router as password_reset_router
 router.include_router(password_reset_router)  # already prefixed /auth internally -> /api/v1/auth/forgot-password, etc.
 
+# forgot password (OTP via email or SMS)
+from api.password_reset_endpoints import router as password_reset_router
+router.include_router(password_reset_router)  # already prefixed /auth internally -> /api/v1/auth/forgot-password, etc.
+
 # category
 from api.v_1.apis_endpoint.categories_v1 import router as category_router
 router.include_router(category_router, prefix="/categories", tags=["Categories"])

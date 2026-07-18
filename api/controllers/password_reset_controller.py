@@ -59,6 +59,7 @@ class PasswordResetController:
             # otherwise lets response latency alone reveal account existence
             # despite the identical response body.
             time.sleep(0.2)
+            # No account, no message sent — nothing to throttle.
             return {
                 "success": True,
                 "message": generic_message,
