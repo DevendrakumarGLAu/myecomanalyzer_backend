@@ -1016,8 +1016,28 @@ class InvoiceExtractController:
         # Remove quantity only when it appears after HSN
         # (Don't remove numbers like "Pack of 2 Hands")
 
-        # Remove trailing size like "- 2.6", "- 2.8", etc.
-        desc = re.sub(r"\s*-\s*\d+(?:\.\d+)?(?=\s|$)", "", desc)
+        # Remove trailing size — either numeric (bangle sizes like "- 2.6",
+        # "- 2.8") or a letter size (clothing sizes like "-L", "-M", "-XL",
+        # "-3XL"), since which one the seller uses varies by product.
+        desc = re.sub(
+            r"\s*-\s*(?:\d+(?:\.\d+)?|XXXL|XXL|XL|XS|S|M|L|[2-4]XL)(?=\s|$)",
+            "",
+            desc,
+            flags=re.IGNORECASE,
+        )
+
+        # A dangling trailing hyphen can be left over when its size value was
+        # already consumed by an earlier regex (e.g. a numeric size that fell
+        # in the 4-8 digit HSN range and got stripped above). Only strip a
+        # hyphen right at the very end — sellers do put hyphens inside the
+        # product name itself (e.g. "Multi-Color", "Red-White Bangle Set"),
+        # so this must not touch one anywhere else in the description.
+        desc = re.sub(r"\s*-\s*$", "", desc)
+
+        # Remove stray colons left behind once the table-column labels/values
+        # they separated (HSN/Qty/amount) get stripped above — a product name
+        # never legitimately needs one.
+        desc = re.sub(r"\s*:\s*", " ", desc)
 
         # Remove extra spaces
         desc = re.sub(r"\s+", " ", desc).strip()

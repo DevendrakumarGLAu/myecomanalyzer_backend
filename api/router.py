@@ -2,8 +2,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from django.contrib.auth.models import User
 
-from api import signup
-from api import login
 from api import auth
 from api.auth_endpoints import router as secure_auth_router
 from api.auth import get_current_user
@@ -23,8 +21,13 @@ router.include_router(secure_auth_router)  # /api/v1/auth/*
 from api.auth_endpoints import router as auth_router
 router.include_router(auth_router, prefix="/auth", tags=["Auth"])
 # router.include_router(auth.router)     # /api/v1/auth/test
-router.include_router(signup.router)   # /api/v1/auth/signup (deprecated, use /auth/signup)
-router.include_router(login.router)    # /api/v1/auth/login (deprecated, use /auth/login)
+# api/signup.py and api/login.py (legacy, pre-secure-auth) are intentionally NOT
+# registered — they bypassed CAPTCHA, rate limiting, brute-force lockout, and
+# (for signup) password policy entirely. Use /auth/signup and /auth/login.
+
+# forgot password (OTP via email or SMS)
+from api.password_reset_endpoints import router as password_reset_router
+router.include_router(password_reset_router)  # already prefixed /auth internally -> /api/v1/auth/forgot-password, etc.
 
 # forgot password (OTP via email or SMS)
 from api.password_reset_endpoints import router as password_reset_router

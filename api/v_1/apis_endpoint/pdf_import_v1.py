@@ -1,5 +1,6 @@
 from datetime import date
 from typing import Optional
+import uuid
 
 from fastapi import APIRouter, UploadFile, File, Query, HTTPException, Depends
 import shutil
@@ -26,7 +27,11 @@ async def upload_invoice(
 ):
     validate_file_extension(file, [".pdf"], field_name="file")
 
-    file_path = os.path.join(UPLOAD_DIR, file.filename)
+    # file.filename is client-supplied and unsanitized — using it directly in
+    # a path allowed writing outside UPLOAD_DIR via "../" sequences. Generate
+    # the on-disk name instead of trusting the upload's filename.
+    safe_name = f"{uuid.uuid4()}.pdf"
+    file_path = os.path.join(UPLOAD_DIR, safe_name)
 
     try:
         with open(file_path, "wb") as buffer:

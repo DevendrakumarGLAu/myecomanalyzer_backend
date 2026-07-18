@@ -7,14 +7,22 @@ from django.contrib.auth.models import User
 
 class CategoryController:
     @staticmethod
-    def get_all_category(current_user: User,page: int = 1,limit: int = 10,search: Optional[str] = None):
+    def get_all_category(current_user: User,page: int = 1,limit: int = 10,search: Optional[str] = None, status: str = "active"):
         """
         Fetch all categories for current_user with optional search, paginated.
+
+        status feeds the admin table's Active/Paused tabs ("all" is also
+        accepted). Default stays "active" for callers like the product-form's
+        category dropdown, which shouldn't offer a deactivated category as an
+        option for a new/edited product.
         """
         filters = {
-            "is_active": True,
             "created_by": current_user
         }
+        if status == "active":
+            filters["is_active"] = True
+        elif status == "paused":
+            filters["is_active"] = False
 
         query = Category.objects.filter(**filters)
 
@@ -69,9 +77,14 @@ class CategoryController:
     @staticmethod
     def update_category(category_id, payload, current_user):
         try:
+            # No is_active filter — an admin must be able to rename a
+            # deactivated category too (renaming is independent of the
+            # active/inactive toggle). Ownership (created_by) was missing
+            # entirely before, letting any authenticated user rename any
+            # other user's category by ID.
             category = Category.objects.filter(
                 id=category_id,
-                is_active=True
+                created_by=current_user,
             ).first()
 
             if not category:
@@ -154,3 +167,27 @@ class CategoryController:
                 "message": "Error deactivating category",
                 "details": str(e)
             }
+
+    @staticmethod
+    def toggle_category_active(category_id, current_user):
+        """
+        Flip active/inactive status of a category owned by current_user —
+        unlike deactivate_category above, this works in both directions.
+        """
+        category = Category.objects.filter(id=category_id, created_by=current_user).first()
+
+        if not category:
+            return {
+                "success": False,
+                "message": "Category not found"
+            }
+
+        category.is_active = not category.is_active
+        category.updated_by = current_user
+        category.save()
+
+        return {
+            "success": True,
+            "message": "Category activated" if category.is_active else "Category deactivated",
+            "data": CategoryResponse.from_orm(category)
+        }

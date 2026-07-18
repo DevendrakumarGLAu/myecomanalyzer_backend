@@ -19,6 +19,7 @@ from api.captcha_service import CaptchaService
 from api.auth_utils import (
     PasswordValidator,
     RateLimiter,
+    check_endpoint_rate_limit,
     BruteForceProtection,
     UserEnumerationProtection,
 )
@@ -214,6 +215,25 @@ def signup(user_data: SignupRequest, request: Request) -> TokenResponse:
     - Trial-to-paid conversion supported
     """
     ip_address = request.client.host if request.client else "unknown"
+
+    # The docstring above claimed this rate limit existed, but nothing ever
+    # enforced it or recorded a signup attempt for check_ip_rate_limit to
+    # count — it was a no-op. Record one attempt per request so the count is
+    # real, and check it before doing anything else.
+    from users.auth_models import LoginAttempt
+
+    allowed, error = RateLimiter.check_ip_rate_limit(
+        ip_address, limit=settings.RATE_LIMIT_SIGNUP_PER_HOUR, window_seconds=3600
+    )
+    if not allowed:
+        raise HTTPException(status_code=429, detail=error)
+
+    LoginAttempt.objects.create(
+        email=user_data.email,
+        ip_address=ip_address,
+        success=False,
+        reason="signup_attempt",
+    )
 
     try:
         with transaction.atomic():
@@ -486,13 +506,20 @@ def login(req: LoginRequest, request:Request) -> TokenResponse:
 def generate_captcha(request: Request) -> CaptchaGenerateResponse:
     """Generate a new captcha challenge and return the image as a base64 string."""
     ip_address = _get_client_ip(request)
+    allowed, error = check_endpoint_rate_limit("captcha_generate", ip_address, limit=20, window_seconds=60)
+    if not allowed:
+        raise HTTPException(status_code=429, detail=error)
     result = CaptchaService.generate_captcha(ip_address=ip_address)
     return CaptchaGenerateResponse(**result)
 
 
 @router.post("/captcha/verify", response_model=CaptchaVerifyResponse)
-def verify_captcha(req: CaptchaVerifyRequest) -> CaptchaVerifyResponse:
+def verify_captcha(req: CaptchaVerifyRequest, request: Request) -> CaptchaVerifyResponse:
     """Verify the captcha answer for a given challenge ID."""
+    ip_address = _get_client_ip(request)
+    allowed, error = check_endpoint_rate_limit("captcha_verify", ip_address, limit=30, window_seconds=60)
+    if not allowed:
+        raise HTTPException(status_code=429, detail=error)
     valid, expires_in = CaptchaService.verify_captcha(req.captcha_id, req.answer)
     if not valid:
         raise HTTPException(status_code=401, detail="Invalid or expired captcha")
@@ -500,8 +527,12 @@ def verify_captcha(req: CaptchaVerifyRequest) -> CaptchaVerifyResponse:
 
 
 @router.post("/captcha/validate", response_model=CaptchaValidateResponse)
-def validate_captcha(req: CaptchaValidateRequest) -> CaptchaValidateResponse:
+def validate_captcha(req: CaptchaValidateRequest, request: Request) -> CaptchaValidateResponse:
     """Validate that a previously generated captcha challenge is still valid."""
+    ip_address = _get_client_ip(request)
+    allowed, error = check_endpoint_rate_limit("captcha_validate", ip_address, limit=30, window_seconds=60)
+    if not allowed:
+        raise HTTPException(status_code=429, detail=error)
     valid = CaptchaService.validate_captcha(req.captcha_id)
     if not valid:
         raise HTTPException(status_code=401, detail="Captcha challenge is not valid")
@@ -524,12 +555,10 @@ def refresh(req: RefreshTokenRequest, request: Request) -> SimpleTokenResponse:
     user_agent = _get_user_agent(request)
 
     try:
-        # Rate limiting
-        allowed, error = RateLimiter.check_ip_rate_limit(
-            ip_address,
-            limit=10,
-            window_seconds=60,
-        )
+        # Rate limiting — RateLimiter.check_ip_rate_limit only counts
+        # LoginAttempt rows, which nothing here ever writes, making that check
+        # a silent no-op for this endpoint. Use the real in-memory limiter.
+        allowed, error = check_endpoint_rate_limit("refresh", ip_address, limit=10, window_seconds=60)
         if not allowed:
             raise HTTPException(status_code=429, detail=error)
 

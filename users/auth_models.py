@@ -103,6 +103,7 @@ class LoginAttempt(models.Model):
             ("account_inactive", "Account Inactive"),
             ("account_locked", "Account Locked"),
             ("invalid_email", "Invalid Email"),
+            ("signup_attempt", "Signup Attempt"),
         ],
         default="invalid_creds"
     )

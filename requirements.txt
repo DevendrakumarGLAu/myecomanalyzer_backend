@@ -44,7 +44,6 @@ pycparser==3.0
 pydantic==2.12.5
 pydantic_core==2.41.5
 pydyf==0.12.1
-PyJWT==2.11.0
 pypdfium2==5.5.0
 pyphen==0.17.2
 python-dateutil==2.9.0.post0
@@ -73,4 +72,9 @@ openai==2.36.0
 langchain==1.3.0
 langgraph==1.2.0
 langchain-openai==1.2.1
+# TODO: pin this — currently unpinned, so a fresh install resolves to whatever
+# is newest at install time (no reproducible builds, no protection from an
+# unexpected/malicious upstream release). Run `pip show google-genai` in your
+# actual environment (I don't have one here) and replace with e.g.
+# google-genai==<that version>.
 google-genai

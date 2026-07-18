@@ -20,9 +20,12 @@ def get_all_categories(
     current_user: User = Depends(get_current_user),
     page: int = Query(1, ge=1),
     limit: int = Query(10, ge=1),
-    search: Optional[str] = Query(None, description="Search category by name")
+    search: Optional[str] = Query(None, description="Search category by name"),
+    status: str = Query("active", pattern="^(active|paused|all)$", description="Filter for the Active/Paused tabs")
 ):
-    result = CategoryController.get_all_category(current_user=current_user,page=page, limit=limit, search=search)
+    result = CategoryController.get_all_category(
+        current_user=current_user, page=page, limit=limit, search=search, status=status
+    )
 
     # if not result["success"]:
     #     raise HTTPException(status_code=400, detail=result["message"])
@@ -66,3 +69,16 @@ def deactivate_category(
         raise HTTPException(status_code=400, detail=result["message"])
 
     return {"message": result["message"]}
+
+
+@router.post("/toggle_active/{category_id}", response_model=CategoryCreateResponse)
+def toggle_category_active(
+    category_id: int,
+    current_user: User = Depends(get_current_user)
+):
+    result = CategoryController.toggle_category_active(category_id, current_user)
+
+    if not result["success"]:
+        raise HTTPException(status_code=404, detail=result["message"])
+
+    return result

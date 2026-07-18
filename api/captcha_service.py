@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import random
+import secrets
 import string
 import uuid
 from datetime import timedelta
@@ -24,8 +25,13 @@ class CaptchaService:
 
     @classmethod
     def _generate_code(cls) -> str:
+        # secrets.choice (CSPRNG), not random.choices (Mersenne Twister,
+        # predictable given enough observed output) — this code is a security
+        # control, not cosmetic. The other random.randint() calls in this file
+        # (image-noise pixel coordinates/colors) are purely cosmetic and don't
+        # need this.
         characters = string.ascii_uppercase + string.digits
-        return "".join(random.choices(characters, k=cls.CODE_LENGTH))
+        return "".join(secrets.choice(characters) for _ in range(cls.CODE_LENGTH))
 
     @classmethod
     def _hash_code(cls, value: str) -> str:

@@ -27,11 +27,33 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-        response.headers["Content-Security-Policy"] = "default-src 'self'"
+        if settings.DEBUG and (
+            request.url.path.startswith("/docs")
+            or request.url.path.startswith("/redoc")
+            or request.url.path.startswith("/openapi.json")
+        ):
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                "img-src 'self' data: https://fastapi.tiangolo.com;"
+            )
+        else:
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'"
+            )
+
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        response.headers["Permissions-Policy"] = (
+            "geolocation=(), microphone=(), camera=()"
+        )
 
         return response
+        # response.headers["Content-Security-Policy"] = "default-src 'self'"
+        # response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        # response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+
+        # return response
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
@@ -131,8 +153,10 @@ def setup_security_middleware(app: FastAPI) -> None:
     # Error handling
     app.add_middleware(ErrorHandlingMiddleware)
 
-    # CORS - must be last
-    cors_origins = settings.CORS_ALLOWED_ORIGINS if hasattr(settings, 'CORS_ALLOWED_ORIGINS') else ["*"]
+    # CORS - must be last. Deny-by-default if the setting is ever missing —
+    # a wildcard fallback here combined with allow_credentials=True below
+    # would be the classic wildcard+credentials CORS misconfiguration.
+    cors_origins = settings.CORS_ALLOWED_ORIGINS if hasattr(settings, 'CORS_ALLOWED_ORIGINS') else []
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,

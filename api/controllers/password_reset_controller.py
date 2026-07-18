@@ -1,5 +1,6 @@
 import logging
 import secrets
+import time
 from datetime import timedelta
 
 from django.conf import settings
@@ -52,6 +53,12 @@ class PasswordResetController:
 
         user = PasswordResetController._find_user(channel, identifier)
         if not user:
+            # No account, no message sent — nothing to throttle. A fixed
+            # delay narrows (doesn't fully close — the found branch's SMTP/SNS
+            # call is unbounded) the timing gap vs. the found branch, which
+            # otherwise lets response latency alone reveal account existence
+            # despite the identical response body.
+            time.sleep(0.2)
             # No account, no message sent — nothing to throttle.
             return {
                 "success": True,

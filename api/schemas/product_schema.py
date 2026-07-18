@@ -105,3 +105,8 @@ class CreateSingleOrderRequest(BaseModel):
     payment_type: Optional[str] = "PREPAID"
 
     order_date: Optional[str] = None
+    
+class ToggleProductResponse(BaseModel):
+    status: str
+    is_active: bool
+    message: str

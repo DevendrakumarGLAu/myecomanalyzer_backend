@@ -155,6 +155,19 @@ async def get_current_user(
             detail="Authentication failed"
         )
 
+async def require_staff_user(
+    current_user: User = Depends(get_current_user)
+) -> User:
+    """
+    Gate for admin/ops-only endpoints (DB dump/restore, raw CSV import, etc.) —
+    requires a valid token AND Django's built-in is_staff flag.
+    """
+    if not current_user.is_staff:
+        security_logger.warning(f"Non-staff user {current_user.username} attempted a staff-only action")
+        raise HTTPException(status_code=403, detail="Staff access required")
+    return current_user
+
+
 async def get_current_user_optional(
     authorization: Optional[str] = Header(None, alias="Authorization", description="Bearer <access_token>")
 ) -> Optional[User]:
