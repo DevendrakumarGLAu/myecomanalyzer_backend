@@ -646,7 +646,7 @@ class SettlementUploadController:
             color="DEFAULT",
             cost_price=0,
             selling_price=selling_price or 0,
-            stock=9999,
+            stock=1000,
             shipping_cost=0,
             rto_cost=0,
             is_auto_created=True,
