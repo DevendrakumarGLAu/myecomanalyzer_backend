@@ -1082,34 +1082,35 @@ class InvoiceExtractController:
             code__iexact=platform_code
         ).first()
 
-        normalized_name = InvoiceExtractController.normalize_product_name(description)
-
         product = None
 
-        # --------------------------------------------------
-        # 1. Find by catalog id (Meesho best practice)
-        # --------------------------------------------------
-        if catalog_id:
-            product = Product.objects.filter(
-                owner=owner,
-                catalog_id=catalog_id,
-            ).first()
-        catalog_value = catalog_id
-        if not catalog_value:
-            catalog_value = str(uuid.uuid4().int)[:9]
+        # catalog_id is never populated by the PDF import (nothing in
+        # parse_invoice_data extracts it, so this always arrives as None) — it's
+        # only used below as the new product's own catalog_id value, generating a
+        # random placeholder since PDF-derived products don't have a real one.
+        catalog_value = catalog_id or str(uuid.uuid4().int)[:9]
 
         category = Category.objects.first()
         color = color.strip().upper() if color else ""
         size = str(size).strip() if size else ""
         sku = sku.strip()
 
-        # 2. Find by SKU — any existing variant with this SKU belongs to the same
+        # 1. Find by SKU — any existing variant with this SKU belongs to the same
         # product even if its size/color differs from this invoice row. Without
         # this, a new size for an already-known SKU had no way to be matched back
-        # to its product (catalog_id is never populated by the PDF import, and the
-        # name-match below only hits if the extracted description normalizes
-        # identically every time), so it fell through to creating a duplicate
-        # product instead of a new variant.
+        # to its product, so it fell through to creating a duplicate product
+        # instead of a new variant.
+        #
+        # A name-based fallback match used to also run here (matching any
+        # existing product whose normalized name equalled this one's). It's been
+        # removed — Meesho assigns a distinct SKU per color/catalog variant, but
+        # the PDF-extracted description is often generic and near-identical across
+        # those variants (e.g. two different colors of the same bangle set), so
+        # matching on name alone was merging genuinely different SKUs into one
+        # product (their variants ended up mixed together, e.g. product 7/8 in
+        # the products table). SKU is the only reliable identity signal here — a
+        # brand-new SKU should always become its own product, never get silently
+        # attached to an unrelated one.
         if not product and sku:
             existing_variant = (
                 ProductVariant.objects.select_related("product")
@@ -1119,15 +1120,7 @@ class InvoiceExtractController:
             if existing_variant:
                 product = existing_variant.product
 
-        # 3. Find by normalized name (fallback when this SKU hasn't been seen yet)
-        if not product and description:
-            normalized = InvoiceExtractController.normalize_product_name(description)
-            for p in Product.objects.filter(owner=owner, platform=platform):
-                if InvoiceExtractController.normalize_product_name(p.name) == normalized:
-                    product = p
-                    break
-
-        # 4. Create only if still not found
+        # 2. Create only if still not found
         if not product:
             product = Product.objects.create(
                 catalog_id = catalog_value,
