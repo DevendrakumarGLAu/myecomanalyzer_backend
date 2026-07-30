@@ -14,18 +14,27 @@ from fastapi import Depends, FastAPI, Request
 from fastapi import APIRouter
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from api.router import router as api_v1_router, ai_router
-from fastapi.middleware.cors import CORSMiddleware
+from api.security_middleware import setup_security_middleware
+from django.conf import settings
 from django.db import close_old_connections
 # F:\project\ecomm-profit\backend\api\router.py
 
 # Security scheme for Swagger
 security = HTTPBearer()
 
+# Swagger/ReDoc/OpenAPI schema are only served locally (DEBUG=True) — no API
+# docs or schema exposed on a deployed instance.
+docs_url = "/docs" if settings.DEBUG else None
+redoc_url = "/redoc" if settings.DEBUG else None
+openapi_url = "/openapi.json" if settings.DEBUG else None
 
 app = FastAPI(
     title="MyEcomAnalyzer API",
     description="E-commerce Analytics and Management API",
     version="1.0.0",
+    docs_url=docs_url,
+    redoc_url=redoc_url,
+    openapi_url=openapi_url,
     swagger_ui_parameters={
         "persistAuthorization": True,
         "displayRequestDuration": True,
@@ -71,19 +80,13 @@ def custom_openapi():
     return app.openapi_schema
 
 app.openapi = custom_openapi
-origins = [
-    "http://localhost:4200",
-    "http://127.0.0.1:4200",
-    "https://marriage-biodata-lufw.onrender.com",
-    "https://myecomanalyzer-frontend.onrender.com"
-]
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,      # frontend origins
-    allow_credentials=True,     # allow cookies/headers
-    allow_methods=["*"],        # allow all HTTP methods (POST, GET, OPTIONS, etc.)
-    allow_headers=["*"],        # allow all headers
-)
+
+# Adds security headers, request logging, a global rate-limit backstop, and
+# CORS (env-driven via Django's CORS_ALLOWED_ORIGINS setting — the single
+# source of truth now; this used to be duplicated as a separate hardcoded
+# CORSMiddleware call here, drifting out of sync with settings.py over time).
+setup_security_middleware(app)
+
 # 4️⃣ Include routers
 router = APIRouter()
 app.include_router(api_v1_router)

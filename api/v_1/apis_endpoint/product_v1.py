@@ -20,17 +20,20 @@ def get_products(
     limit: int = Query(10, ge=1),
     search: Optional[str] = None,
     platform: Optional[str] = None,
+    status: str = Query("all", pattern="^(active|paused|all)$", description="Filter for the Active/Paused tabs"),
 ):
     try:
-        return controller.get_all_products(current_user, page, limit, search, platform)
-        # return controller.get_all_products(current_user, page=page, limit=limit, search=search)
+        return controller.get_all_products(current_user, page, limit, search, platform, status)
     except Exception as e:
         # Handle and log the error
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/get/{product_id}", response_model=ProductResponse)
 def get_product(product_id: int, current_user: User = Depends(get_current_user)):
-    return ProductController.get_product_by_id(product_id, current_user)
+    result = ProductController.get_product_response_by_id(product_id, current_user)
+    if not result:
+        raise HTTPException(status_code=404, detail="Product not found")
+    return result
 
 @router.post("/add/", response_model=APIResponse)
 def add_product(payload: ProductRequest, current_user: User = Depends(get_current_user)):
@@ -94,8 +97,8 @@ def toggle_product_active(product_id: int, current_user: User = Depends(get_curr
     return ProductController.toggle_product_active_logic(product_id, current_user)
 
 @router.delete("/del_products/{product_id}")
-def delete_product(product_id: int):
-    return ProductController.delete_product(product_id)
+def delete_product(product_id: int, current_user: User = Depends(get_current_user)):
+    return ProductController.delete_product(product_id, current_user)
 
 # product deactivate
 @router.patch("/deactivate")

@@ -17,6 +17,7 @@ from payments.models import OrderSettlement
 from orders_status.models import OrderStatus
 from platforms.models import Platform
 from products.models import Product, ProductVariant
+from api.controllers.pdf_import_controlller import InvoiceExtractController
 
 
 def clean_number(value):
@@ -240,7 +241,13 @@ class SettlementUploadController:
                     )
 
                 print("ADS RECORDS TO INSERT:", len(ads_records))
-                
+                deduction_duration = None
+
+                if pd.notna(row.get("Deduction Duration")):
+                    deduction_duration = (
+                        pd.to_datetime(row.get("Deduction Duration"), errors="coerce")
+                        .date()
+                    )
 
                 if ads_records:
                     existing_ads = AdsSpend.objects.filter(
@@ -255,9 +262,14 @@ class SettlementUploadController:
 
                 new_records = [
                     r for r in ads_records
-                    if (r.campaign_id, r.deduction_duration.date() if r.deduction_duration else None)
-                    not in existing_set
+                    if (r.campaign_id, r.deduction_duration) not in existing_set
                 ]
+
+                # new_records = [
+                #     r for r in ads_records
+                #     if (r.campaign_id, r.deduction_duration.date() if r.deduction_duration else None)
+                #     not in existing_set
+                # ]
 
                 AdsSpend.objects.bulk_create(new_records, batch_size=1000)
 
@@ -567,9 +579,17 @@ class SettlementUploadController:
         # -----------------------------
         # PRODUCT
         # -----------------------------
+        # Keep the marketplace's original casing for storage — DB lookups below
+        # use sku__iexact so they stay case-insensitive without forcing this.
         sku = str(
                 row.get(mapping.get("sku"), "")
-            ).strip().upper()
+            ).strip()
+        sku_key = sku.upper()  # in-memory variants_cache key only, never stored
+        product_name = str(
+                row.get(mapping.get("product_name"), "")
+            ).strip()
+
+        # 1. Find by an existing variant with this exact SKU
         variant = ProductVariant.objects.select_related(
                 "product"
             ).filter(
@@ -578,33 +598,44 @@ class SettlementUploadController:
 
         product = variant.product if variant else None
 
-        product_name = str(
-                row.get(mapping.get("product_name"), "")
-            ).strip()
+        # 2. Find by catalog id — the same product can show up under a new SKU
+        if not product and catalog_id:
+            product = Product.objects.filter(
+                owner=current_user,
+                catalog_id=catalog_id
+            ).first()
 
+        # NOTE: a name-based fallback match used to live here (matching any
+        # existing product whose normalized name equalled this one's). It's been
+        # removed — Meesho assigns a distinct SKU per color/catalog variant, but
+        # the settlement sheet's product name is often generic and near-identical
+        # across those variants, so matching on name alone was merging genuinely
+        # different SKUs into one product (see the same fix in
+        # pdf_import_controlller.get_or_create_product_from_invoice). SKU and
+        # catalog_id are the only reliable identity signals here — a brand-new
+        # SKU should always become its own product.
+
+        # 3. Create only if still not found
         if not product:
+            category = Category.objects.first()
 
-            if not product:
-
-                category = Category.objects.first()
-
-                product = Product.objects.create(
-                    catalog_id=catalog_id or str(uuid.uuid4().int)[:9],
-                    name=product_name or sku,
-                    category=category,
-                    platform=platform_obj,
-                    owner=current_user,
-                    created_by=current_user,
-                    updated_by=current_user,
-                    is_auto_created=True,
-                    requires_manual_review=True
-                )
-                product_created = True
+            product = Product.objects.create(
+                catalog_id=catalog_id or str(uuid.uuid4().int)[:9],
+                name=product_name or sku,
+                category=category,
+                platform=platform_obj,
+                owner=current_user,
+                created_by=current_user,
+                updated_by=current_user,
+                is_auto_created=True,
+                requires_manual_review=True
+            )
+            product_created = True
 
         # -----------------------------
         # VARIANT
         # -----------------------------
-        variant = variants_cache.get(sku.upper())
+        variant = variants_cache.get(sku_key)
 
         if not variant:
             variant = ProductVariant.objects.select_related(
@@ -614,7 +645,7 @@ class SettlementUploadController:
             ).first()
 
             if variant:
-                variants_cache[sku.upper()] = variant
+                variants_cache[sku_key] = variant
 
         if not variant:
 
@@ -634,7 +665,7 @@ class SettlementUploadController:
             variant_created = True
 
 
-        variants_cache[sku.upper()] = variant
+        variants_cache[sku_key] = variant
 
         # -----------------------------
         # MARKETPLACE ORDER

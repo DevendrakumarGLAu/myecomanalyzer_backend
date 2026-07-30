@@ -1,4 +1,5 @@
-from django.db.models import Sum, Q
+from django.db.models import F, Sum
+from django.db.models.functions import Coalesce
 from datetime import timedelta
 from django.utils import timezone
 from django.contrib.auth.models import User
@@ -7,6 +8,12 @@ from notifications.models import Notification
 from orders.models import Order
 from products.models import Product, ProductVariant
 from platforms.models import Platform
+
+# How stale a user's last system-generated notification can be before we
+# recompute the business rules again. Without this, every poll of the
+# unread-count/list endpoints would re-run the Sum() aggregates over Orders
+# below on every request.
+REGENERATE_INTERVAL_MINUTES = 15
 
 
 class NotificationController:
@@ -27,65 +34,80 @@ class NotificationController:
                 except Platform.DoesNotExist:
                     return
 
-            # Clear old notifications (keep only last 30 days)
+            recent_cutoff = timezone.now() - timedelta(minutes=REGENERATE_INTERVAL_MINUTES)
+            if Notification.objects.filter(user=current_user, created_at__gte=recent_cutoff).exists():
+                return
+
+            # Only clear already-read notifications older than 30 days —
+            # unread ones are never auto-deleted, no matter how old, since
+            # deleting them silently would mean the user never saw them.
             thirty_days_ago = timezone.now() - timedelta(days=30)
             Notification.objects.filter(
                 user=current_user,
+                is_read=True,
                 created_at__lt=thirty_days_ago
             ).delete()
 
-            # 1. Low stock products (stock < 10)
-            low_stock_variants = ProductVariant.objects.filter(
+            # 1. Low stock products (stock < 10) — bulk-fetch existing keys
+            # once instead of one exists() query per variant (was N+1).
+            low_stock_variants = list(ProductVariant.objects.filter(
                 product__owner=current_user,
                 stock__lt=10,
                 stock__gt=0
-            ).select_related('product')
+            ).select_related('product'))
 
+            # Only suppress while an unread alert for that variant still
+            # exists — once the user reads it, a fresh alert can fire again
+            # reflecting whatever the stock level has dropped to since.
+            existing_low_stock_product_ids = set(
+                Notification.objects.filter(
+                    user=current_user, type='warning', title='Low Stock Alert', is_read=False,
+                    product_id__in=[v.product_id for v in low_stock_variants],
+                ).values_list('product_id', 'data__variant_id')
+            )
+
+            new_notifications = []
             for variant in low_stock_variants:
-                # Check if notification already exists
-                existing = Notification.objects.filter(
+                if (variant.product_id, variant.id) in existing_low_stock_product_ids:
+                    continue
+                new_notifications.append(Notification(
                     user=current_user,
-                    product=variant.product,
                     type='warning',
                     title='Low Stock Alert',
-                    message__icontains=f"has only {variant.stock} units"
-                ).exists()
-
-                if not existing:
-                    Notification.objects.create(
-                        user=current_user,
-                        type='warning',
-                        title='Low Stock Alert',
-                        message=f"Product '{variant.product.name}' (SKU: {variant.sku}) has only {variant.stock} units left",
-                        priority='high',
-                        product=variant.product,
-                        data={'variant_id': variant.id, 'stock': variant.stock}
-                    )
+                    message=f"Product '{variant.product.name}' (SKU: {variant.sku}) has only {variant.stock} units left",
+                    priority='high',
+                    product=variant.product,
+                    data={'variant_id': variant.id, 'stock': variant.stock}
+                ))
 
             # 2. Out of stock products
-            out_of_stock_variants = ProductVariant.objects.filter(
+            out_of_stock_variants = list(ProductVariant.objects.filter(
                 product__owner=current_user,
                 stock=0
-            ).select_related('product')
+            ).select_related('product'))
+
+            existing_oos_product_ids = set(
+                Notification.objects.filter(
+                    user=current_user, type='error', title='Out of Stock', is_read=False,
+                    product_id__in=[v.product_id for v in out_of_stock_variants],
+                ).values_list('product_id', flat=True)
+            )
 
             for variant in out_of_stock_variants:
-                existing = Notification.objects.filter(
+                if variant.product_id in existing_oos_product_ids:
+                    continue
+                new_notifications.append(Notification(
                     user=current_user,
-                    product=variant.product,
                     type='error',
-                    title='Out of Stock'
-                ).exists()
+                    title='Out of Stock',
+                    message=f"Product '{variant.product.name}' (SKU: {variant.sku}) is out of stock",
+                    priority='high',
+                    product=variant.product,
+                    data={'variant_id': variant.id}
+                ))
 
-                if not existing:
-                    Notification.objects.create(
-                        user=current_user,
-                        type='error',
-                        title='Out of Stock',
-                        message=f"Product '{variant.product.name}' (SKU: {variant.sku}) is out of stock",
-                        priority='high',
-                        product=variant.product,
-                        data={'variant_id': variant.id}
-                    )
+            if new_notifications:
+                Notification.objects.bulk_create(new_notifications)
 
             # 3. Most sold products (by quantity in last 30 days)
             thirty_days_ago_date = timezone.now().date() - timedelta(days=30)
@@ -96,92 +118,79 @@ class NotificationController:
                 total_quantity=Sum('quantity')
             ).order_by('-total_quantity')[:3]
 
+            one_day_ago = timezone.now() - timedelta(days=1)
+            existing_today = set(
+                Notification.objects.filter(
+                    user=current_user, created_at__gte=one_day_ago,
+                    title__in=['Top Selling Product', 'High Profit Product', 'Loss Making Product'],
+                ).values_list('title', 'product_id')
+            )
+
+            daily_notifications = []
             for product in most_sold_products:
-                existing = Notification.objects.filter(
+                key = ('Top Selling Product', product['product__id'])
+                if key in existing_today:
+                    continue
+                daily_notifications.append(Notification(
                     user=current_user,
-                    product_id=product['product__id'],
                     type='info',
                     title='Top Selling Product',
-                    created_at__gte=timezone.now() - timedelta(days=1)  # Only one per day
-                ).exists()
-
-                if not existing:
-                    Notification.objects.create(
-                        user=current_user,
-                        type='info',
-                        title='Top Selling Product',
-                        message=f"'{product['product__name']}' sold {product['total_quantity']} units in the last 30 days",
-                        priority='medium',
-                        product_id=product['product__id'],
-                        data={'total_quantity': product['total_quantity']}
-                    )
-
-            # 4. Most profitable products (revenue - cost in last 30 days)
-            profitable_products = Order.objects.filter(
-                product__owner=current_user,
-                marketplace_order__order_date__gte=thirty_days_ago_date
-            ).values(
-                'product__name',
-                'product__id'
-            ).annotate(
-                total_revenue=Sum('selling_price') * Sum('quantity'),
-                total_cost=Sum('variant__cost_price') * Sum('quantity'),
-                profit=Sum('selling_price') * Sum('quantity') - Sum('variant__cost_price') * Sum('quantity')
-            ).order_by('-profit')[:3]
-
-            for product in profitable_products:
-                if product['profit'] > 0:
-                    existing = Notification.objects.filter(
-                        user=current_user,
-                        product_id=product['product__id'],
-                        type='success',
-                        title='High Profit Product',
-                        created_at__gte=timezone.now() - timedelta(days=1)
-                    ).exists()
-
-                    if not existing:
-                        Notification.objects.create(
-                            user=current_user,
-                            type='success',
-                            title='High Profit Product',
-                            message=f"'{product['product__name']}' generated ₹{product['profit']:.2f} profit in the last 30 days",
-                            priority='medium',
-                            product_id=product['product__id'],
-                            data={'profit': product['profit']}
-                        )
-
-            # 5. Products with losses (negative profit)
-            loss_products = Order.objects.filter(
-                product__owner=current_user,
-                marketplace_order__order_date__gte=thirty_days_ago_date
-            ).values(
-                'product__name',
-                'product__id'
-            ).annotate(
-                total_revenue=Sum('selling_price') * Sum('quantity'),
-                total_cost=Sum('variant__cost_price') * Sum('quantity'),
-                profit=Sum('selling_price') * Sum('quantity') - Sum('variant__cost_price') * Sum('quantity')
-            ).filter(profit__lt=0).order_by('profit')[:3]
-
-            for product in loss_products:
-                existing = Notification.objects.filter(
-                    user=current_user,
+                    message=f"'{product['product__name']}' sold {product['total_quantity']} units in the last 30 days",
+                    priority='medium',
                     product_id=product['product__id'],
+                    data={'total_quantity': product['total_quantity']}
+                ))
+
+            # 4/5. Profit and loss per product — Sum(price) * Sum(qty) is
+            # wrong (it multiplies the total price across ALL orders by the
+            # total quantity across ALL orders, not a per-order total); the
+            # correct per-order revenue/cost is Sum(price * qty) computed row
+            # by row, via F() expressions. cost_price is nullable, so it's
+            # coalesced to 0 rather than silently dropping that order's cost
+            # (which would overstate profit).
+            profit_products = Order.objects.filter(
+                product__owner=current_user,
+                marketplace_order__order_date__gte=thirty_days_ago_date
+            ).values(
+                'product__name',
+                'product__id'
+            ).annotate(
+                total_revenue=Sum(F('selling_price') * F('quantity')),
+                total_cost=Sum(Coalesce(F('variant__cost_price'), 0.0) * F('quantity')),
+            ).annotate(
+                profit=F('total_revenue') - F('total_cost')
+            )
+
+            for product in profit_products.filter(profit__gt=0).order_by('-profit')[:3]:
+                key = ('High Profit Product', product['product__id'])
+                if key in existing_today:
+                    continue
+                daily_notifications.append(Notification(
+                    user=current_user,
+                    type='success',
+                    title='High Profit Product',
+                    message=f"'{product['product__name']}' generated ₹{product['profit']:.2f} profit in the last 30 days",
+                    priority='medium',
+                    product_id=product['product__id'],
+                    data={'profit': product['profit']}
+                ))
+
+            for product in profit_products.filter(profit__lt=0).order_by('profit')[:3]:
+                key = ('Loss Making Product', product['product__id'])
+                if key in existing_today:
+                    continue
+                daily_notifications.append(Notification(
+                    user=current_user,
                     type='error',
                     title='Loss Making Product',
-                    created_at__gte=timezone.now() - timedelta(days=1)
-                ).exists()
+                    message=f"'{product['product__name']}' incurred ₹{abs(product['profit']):.2f} loss in the last 30 days",
+                    priority='high',
+                    product_id=product['product__id'],
+                    data={'loss': abs(product['profit'])}
+                ))
 
-                if not existing:
-                    Notification.objects.create(
-                        user=current_user,
-                        type='error',
-                        title='Loss Making Product',
-                        message=f"'{product['product__name']}' incurred ₹{abs(product['profit']):.2f} loss in the last 30 days",
-                        priority='high',
-                        product_id=product['product__id'],
-                        data={'loss': abs(product['profit'])}
-                    )
+            if daily_notifications:
+                Notification.objects.bulk_create(daily_notifications)
 
         except Exception as e:
             print(f"Error in NotificationController.generate_notifications: {str(e)}")
@@ -202,8 +211,10 @@ class NotificationController:
                 query = query.filter(is_read=False)
 
             notifications = query.order_by('-created_at')[:20]  # Get latest 20
+            unread_count = Notification.objects.filter(user=current_user, is_read=False).count()
 
             return {
+                "unread_count": unread_count,
                 "notifications": [
                     {
                         "id": n.id,
@@ -215,6 +226,9 @@ class NotificationController:
                         "created_at": n.created_at.isoformat(),
                         "product_id": n.product.id if n.product else None,
                         "order_id": n.order.id if n.order else None,
+                        # Deep-link so clicking a notification in the header
+                        # takes the user somewhere useful instead of nowhere.
+                        "action_url": "/products" if n.product_id else None,
                         "data": n.data
                     }
                     for n in notifications
@@ -223,7 +237,21 @@ class NotificationController:
 
         except Exception as e:
             print(f"Error in NotificationController.get_notifications: {str(e)}")
-            return {"notifications": []}
+            return {"unread_count": 0, "notifications": []}
+
+    @staticmethod
+    def get_unread_count(current_user):
+        """
+        Cheap count-only query for header-badge polling — does NOT trigger
+        generate_notifications (that's gated separately by
+        REGENERATE_INTERVAL_MINUTES and runs Sum() aggregates over Orders;
+        polling this every 30-60s should not repeatedly pay that cost).
+        """
+        try:
+            return {"unread_count": Notification.objects.filter(user=current_user, is_read=False).count()}
+        except Exception as e:
+            print(f"Error in NotificationController.get_unread_count: {str(e)}")
+            return {"unread_count": 0}
 
     @staticmethod
     def mark_as_read(notification_id, current_user):

@@ -78,6 +78,40 @@ class PasswordValidator:
         return False
 
 
+_endpoint_rate_buckets: dict = {}
+
+
+def check_endpoint_rate_limit(
+    bucket: str,
+    ip_address: str,
+    limit: int,
+    window_seconds: int = 60,
+) -> Tuple[bool, Optional[str]]:
+    """
+    In-memory per-process rate limiter for endpoints that have no natural DB
+    table to count real attempts against — RateLimiter.check_ip_rate_limit
+    below only counts LoginAttempt rows, which nothing writes to for endpoints
+    like /auth/refresh, /auth/captcha/*, or the forgot-password flow, making
+    that check a silent no-op there. Not distributed across multiple worker
+    processes; move to Redis if this app is ever deployed with >1 worker.
+    """
+    now = time.time()
+    window_start = now - window_seconds
+    key = f"{bucket}:{ip_address}"
+
+    timestamps = _endpoint_rate_buckets.setdefault(key, [])
+    while timestamps and timestamps[0] < window_start:
+        timestamps.pop(0)
+
+    if len(timestamps) >= limit:
+        retry_after = int(window_seconds - (now - timestamps[0]))
+        security_logger.warning(f"Rate limit exceeded for {bucket} from {ip_address}")
+        return False, f"Too many requests. Try again in {max(retry_after, 1)} seconds"
+
+    timestamps.append(now)
+    return True, None
+
+
 class RateLimiter:
     """Rate limiting for authentication endpoints"""
 

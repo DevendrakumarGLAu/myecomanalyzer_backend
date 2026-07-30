@@ -112,4 +112,6 @@ class OrderProfit(BaseModel):
         indexes = [
             models.Index(fields=["net_profit"]),
             models.Index(fields=["is_loss"]),
+            models.Index(fields=["sku"]),
+            models.Index(fields=["created_by", "sku"], name="order_profit_created_sku_idx"),
         ]

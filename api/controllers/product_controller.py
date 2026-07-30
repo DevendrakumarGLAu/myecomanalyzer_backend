@@ -16,21 +16,71 @@ import os
 class ProductController:
 
     @staticmethod
+    def _serialize_product(product):
+        """
+        Builds a ProductResponse from a Product instance whose
+        variants/category/platform are already loaded (via select_related +
+        prefetch_related, or already in-memory) — never re-queries.
+        """
+        variants = list(product.variants.all())
+        first_variant = variants[0] if variants else None
+
+        return ProductResponse(
+            id=product.id,
+            catalog_id=product.catalog_id,
+            name=product.name,
+            image=ProductController.get_image_url(product.image) if product.image else None,
+            category_id=product.category_id,
+            category_name=product.category.name if product.category else "",
+            platform_code=product.platform.code if product.platform else None,
+            sku=first_variant.sku if first_variant else None,
+            color=first_variant.color if first_variant else None,
+            cost_price=first_variant.cost_price if first_variant else None,
+            selling_price=first_variant.selling_price if first_variant else None,
+            stock=first_variant.stock if first_variant else None,
+            gst_percent=float(product.gst_percent),
+            commission_percent=float(product.commission_percent),
+            is_active=product.is_active,
+            variants=[ProductVariantResponse.model_validate(v) for v in variants],
+        )
+
+    @staticmethod
     def get_product_by_id(product_id: int, current_user: User):
         """
-        Fetch single product for current user
-        Return None if not found
+        Fetch single product for current user (active or inactive).
+        Return None if not found.
+
+        No is_active filter here — this is also used by
+        toggle_product_active_logic to flip an inactive product back to
+        active, which would always 404 if this only matched active ones.
+        Ownership (owner=current_user) is the real security boundary, not
+        active status.
         """
         product = Product.objects.filter(
-            id=product_id, 
+            id=product_id,
             owner=current_user,
-            is_active=True
         ).select_related("category", "platform").prefetch_related("variants").first()
 
         if not product:
             return None
         return product
 
+    @staticmethod
+    def get_product_response_by_id(product_id: int, current_user: User):
+        """
+        Serialized version of get_product_by_id, for the GET /get/{id}
+        endpoint. get_product_by_id itself must keep returning the raw model
+        (delete_product_logic/toggle_product_active_logic call .save()/
+        .soft_delete() on it), but the route's response_model is
+        ProductResponse, which needs sku/color/cost_price/etc. derived from
+        the first variant plus category_name/platform_code from the FKs —
+        fields that don't exist on the raw Product model, so returning it
+        directly there fails Pydantic validation on every request.
+        """
+        product = ProductController.get_product_by_id(product_id, current_user)
+        if not product:
+            return None
+        return ProductController._serialize_product(product)
 
     @staticmethod
     def get_all_products(
@@ -38,13 +88,20 @@ class ProductController:
         page: int = 1,
         limit: int = 10,
         search: Optional[str] = None,
-        platform: Optional[int] = None
+        platform: Optional[int] = None,
+        status: str = "all",
     ):
         try:
+            # status feeds the Active/Paused tabs on the admin table — each
+            # tab requests its own filtered, paginated list rather than
+            # splitting one mixed page client-side.
             filters = {
                 "owner": current_user,
-                "is_active": True
             }
+            if status == "active":
+                filters["is_active"] = True
+            elif status == "paused":
+                filters["is_active"] = False
             if platform:
                 filters["platform__code"] = platform
             query = (
@@ -56,12 +113,18 @@ class ProductController:
                     "id",
                     "catalog_id",
                     "name",
+                    "image",
                     "category_id",
                     "platform_id",
                     "gst_percent",
                     "commission_percent",
                     "is_active",
-                    "platform__code"
+                    "platform__code",
+                    # category__name is accessed below (p.category.name) —
+                    # without it in .only(), it's a deferred field that Django
+                    # lazy-loads with its own query on first access, one more
+                    # per-product query hiding behind select_related("category").
+                    "category__name",
                 )
                 .order_by("-id")
             )
@@ -85,14 +148,17 @@ class ProductController:
 
             items = []
             for p in products:
-                # get first variant SKU if available
-                sku = p.variants.first().sku if p.variants.exists() else None
+                # p.variants.all() reuses the prefetch_related("variants")
+                # cache above — zero extra queries. Calling .exists()/.first()
+                # on the manager instead (as this used to) bypasses that
+                # cache and issues a fresh query every time, so this loop was
+                # doing up to 10 extra round-trips per product (5 fields x
+                # both .exists() and .first()) despite prefetch_related
+                # already having every variant in memory.
+                variants = list(p.variants.all())
+                first_variant = variants[0] if variants else None
                 category_name = p.category.name if p.category else None
-                color= p.variants.first().color if p.variants.exists() else None
-                cost_price = p.variants.first().cost_price if p.variants.exists() else None
-                stock = p.variants.first().stock if p.variants.exists() else None
-                selling_price = p.variants.first().selling_price if p.variants.exists() else None
-                
+
                 items.append(
                     ProductResponse(
                         id=p.id,
@@ -100,19 +166,19 @@ class ProductController:
                         name=p.name,
                         image=ProductController.get_image_url(p.image) if p.image else None,
                         category_id=p.category_id,
-                        category_name=category_name,   # added category name
-                        sku=sku,                  # added SKU
-                        color=color,
-                        cost_price=cost_price,
-                        selling_price=selling_price,
-                        stock=stock,
+                        category_name=category_name,
+                        sku=first_variant.sku if first_variant else None,
+                        color=first_variant.color if first_variant else None,
+                        cost_price=first_variant.cost_price if first_variant else None,
+                        selling_price=first_variant.selling_price if first_variant else None,
+                        stock=first_variant.stock if first_variant else None,
                         platform_code=p.platform.code if p.platform else None,
                         gst_percent=float(p.gst_percent),
                         commission_percent=float(p.commission_percent),
                         is_active=p.is_active,
                         variants=[
                             ProductVariantResponse.model_validate(v)
-                            for v in p.variants.all()
+                            for v in variants
                         ]
                     )
                 )
@@ -310,10 +376,16 @@ class ProductController:
         current_user: User,
     ):
 
-        product = Product.objects.prefetch_related(
-            "variants",
+        # category/platform are plain ForeignKeys — select_related joins them
+        # in the same query (0 extra round-trips). variants is the reverse
+        # side of a FK, which is what prefetch_related is actually for; the
+        # old code used prefetch_related for all three, which for category/
+        # platform means 2 extra queries instead of 0.
+        product = Product.objects.select_related(
             "category",
             "platform",
+        ).prefetch_related(
+            "variants",
         ).filter(
             id=product_id,
             owner=current_user
@@ -368,7 +440,23 @@ class ProductController:
 
         if payload.variants:
 
+            # product.variants.all() reuses the prefetch_related("variants")
+            # cache from the fetch above — one query for every variant this
+            # product has, instead of the loop below previously running a
+            # separate filter().first() PLUS a separate duplicate-check
+            # .exists() query for every single item in the payload (2+
+            # queries x N variants, on top of a create() per changed cost and
+            # a save() per item).
+            existing_variants = list(product.variants.all())
+            variants_by_id = {v.id: v for v in existing_variants}
+            variants_by_key = {}
+            for v in existing_variants:
+                variants_by_key.setdefault((v.sku, v.size, v.color), []).append(v)
+
             processed_ids = []
+            variants_to_save = []
+            new_variants = []
+            cost_history_entries = []
 
             for item in payload.variants:
 
@@ -379,22 +467,15 @@ class ProductController:
                 # ---------- Existing Variant ----------
                 if item.id:
 
-                    variant = ProductVariant.objects.filter(
-                        id=item.id,
-                        product=product
-                    ).first()
+                    variant = variants_by_id.get(item.id)
 
                     if not variant:
                         continue
 
-                    duplicate = ProductVariant.objects.filter(
-                        product=product,
-                        sku=sku,
-                        size=size,
-                        color=color
-                    ).exclude(
-                        id=variant.id
-                    ).exists()
+                    duplicate = any(
+                        v.id != variant.id
+                        for v in variants_by_key.get((sku, size, color), [])
+                    )
 
                     if duplicate:
                         raise HTTPException(
@@ -405,22 +486,20 @@ class ProductController:
                     old_cost = variant.cost_price or 0
                     # Save history BEFORE updating the variant
                     if variant.cost_price != item.cost_price:
-                        CostPriceUpdateHistory.objects.create(
+                        cost_history_entries.append(CostPriceUpdateHistory(
                             variant=variant,
                             old_cost_price=old_cost,
                             new_cost_price=item.cost_price,
                             effective_from=item.effective_from,
                             created_by=current_user,
                             updated_by=current_user,
-                        )
-
-                    variant.cost_price = item.cost_price
-                    variant.cost_price_pending = False
+                        ))
 
                     variant.sku = sku
                     variant.size = size
                     variant.color = color
                     variant.cost_price = item.cost_price
+                    variant.cost_price_pending = False
                     variant.selling_price = item.selling_price
                     variant.stock = item.stock
                     variant.shipping_cost = item.shipping_cost or 0
@@ -428,38 +507,50 @@ class ProductController:
                     variant.is_auto_created = False
                     variant.requires_manual_review = False
 
-                    variant.save()
-
+                    variants_to_save.append(variant)
                     processed_ids.append(variant.id)
 
                 # ---------- New Variant ----------
                 else:
 
-                    variant, created = ProductVariant.objects.get_or_create(
-                        product=product,
-                        sku=sku,
-                        size=size,
-                        color=color,
-                        defaults={
-                            "cost_price": item.cost_price,
-                            "selling_price": item.selling_price,
-                            "stock": item.stock,
-                            "shipping_cost": item.shipping_cost or 0,
-                            "rto_cost": item.rto_cost or 0,
-                            "is_auto_created": False,
-                            "requires_manual_review": False,
-                        },
-                    )
+                    # A "new" item that actually collides with an existing
+                    # (product, sku, size, color) — treat as an update
+                    # instead of a separate get_or_create() round-trip.
+                    existing_match = variants_by_key.get((sku, size, color))
 
-                    if not created:
+                    if existing_match:
+                        variant = existing_match[0]
                         variant.cost_price = item.cost_price
                         variant.selling_price = item.selling_price
                         variant.stock = item.stock
                         variant.shipping_cost = item.shipping_cost or 0
                         variant.rto_cost = item.rto_cost or 0
-                        variant.save()
+                        variants_to_save.append(variant)
+                        processed_ids.append(variant.id)
+                    else:
+                        new_variants.append(ProductVariant(
+                            product=product,
+                            sku=sku,
+                            size=size,
+                            color=color,
+                            cost_price=item.cost_price,
+                            selling_price=item.selling_price,
+                            stock=item.stock,
+                            shipping_cost=item.shipping_cost or 0,
+                            rto_cost=item.rto_cost or 0,
+                            is_auto_created=False,
+                            requires_manual_review=False,
+                        ))
 
-                    processed_ids.append(variant.id)
+            for variant in variants_to_save:
+                variant.save()
+
+            if cost_history_entries:
+                CostPriceUpdateHistory.objects.bulk_create(cost_history_entries)
+
+            if new_variants:
+                created = ProductVariant.objects.bulk_create(new_variants)
+                processed_ids.extend(v.id for v in created)
 
             # Optional: delete removed variants
             ProductVariant.objects.filter(
@@ -469,35 +560,16 @@ class ProductController:
                 ).update(is_active=False)
 
         product.refresh_from_db()
+        return ProductController._serialize_product(product)
 
-        first = product.variants.first()
-
-        return ProductResponse(
-            id=product.id,
-            catalog_id=product.catalog_id,
-            name=product.name,
-            category_id=product.category_id,
-            category_name=product.category.name if product.category else "",
-            platform_code=product.platform.code if product.platform else None,
-            gst_percent=float(product.gst_percent),
-            commission_percent=float(product.commission_percent),
-            is_active=product.is_active,
-            sku=first.sku if first else "",
-            color=first.color if first else "",
-            cost_price=first.cost_price if first else 0,
-            selling_price=first.selling_price if first else 0,
-            stock=first.stock if first else 0,
-            variants=[
-                ProductVariantResponse.model_validate(v)
-                for v in product.variants.all()
-            ],
-        )      
     @staticmethod
     def delete_product_logic(product_id: int, current_user: User):
         """
         Soft delete product for current user
         """
         product = ProductController.get_product_by_id(product_id, current_user)
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
         product.soft_delete(user=current_user)  # uses BaseModel soft_delete
         return {"status": "success", "deleted_at": product.deleted_at}
 
@@ -507,46 +579,53 @@ class ProductController:
         Toggle active/inactive status of a product
         """
         product = ProductController.get_product_by_id(product_id, current_user)
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
         product.is_active = not product.is_active
         product.updated_by = current_user
         product.save()
-        return product
 
+        # response_model=ProductResponse on the route needs sku/color/
+        # category_name/etc. that don't exist on the raw Product model —
+        # returning it directly (as this used to) fails Pydantic validation
+        # on every call.
+        return ProductController._serialize_product(product)
+
+    @staticmethod
     def build_product_response(product):
-        product = Product.objects.prefetch_related(
-            "variants", "category", "platform"
+        product = Product.objects.select_related(
+            "category", "platform"
+        ).prefetch_related(
+            "variants"
         ).get(id=product.id)
 
-        first_variant = product.variants.first()
-
-        return ProductResponse(
-            id=product.id,
-            catalog_id=product.catalog_id,
-            name=product.name,
-            category_id=product.category_id,
-            category_name=product.category.name if product.category else None,
-            platform_code=product.platform.code if product.platform else None,
-            gst_percent=float(product.gst_percent),
-            commission_percent=float(product.commission_percent),
-            is_active=product.is_active,
-
-            # First variant data
-            sku=first_variant.sku if first_variant else None,
-            color=first_variant.color if first_variant else None,
-            cost_price=first_variant.cost_price if first_variant else 0,
-            selling_price=first_variant.selling_price if first_variant else 0,
-            stock=first_variant.stock if first_variant else 0,
-
-            # Variants list
-            variants=[
-                ProductVariantResponse.model_validate(v)
-                for v in product.variants.all()
-            ]
-        )
+        return ProductController._serialize_product(product)
         
     @staticmethod
-    def delete_product(product_id: int):
+    def delete_product(product_id: int, current_user: User):
+        # Ownership check — this is a hard/permanent delete (unlike
+        # delete_product_logic's soft delete above), so it must never operate
+        # on another tenant's product.
+        owned = Product.objects.filter(id=product_id, owner=current_user).exists()
+        if not owned:
+            raise HTTPException(status_code=404, detail="Product not found")
+
         with transaction.atomic():
+            # Capture which marketplace orders / customers this product's
+            # orders touch BEFORE deleting them, so the orphan cleanup below
+            # can check only those specific rows — the previous version ran
+            # an unscoped, system-wide scan of every MarketplaceOrder and
+            # every Customer on EVERY single product delete, regardless of
+            # which seller or product was involved.
+            affected_marketplace_order_ids = list(
+                Order.objects.filter(product_id=product_id)
+                .values_list("marketplace_order_id", flat=True).distinct()
+            )
+            affected_customer_ids = list(
+                MarketplaceOrder.objects.filter(id__in=affected_marketplace_order_ids)
+                .values_list("customer_id", flat=True).distinct()
+            )
+
             OrderSettlement.objects.filter(
                 order__product_id=product_id
             ).delete()
@@ -564,11 +643,13 @@ class ProductController:
             ).delete()
 
             MarketplaceOrder.objects.filter(
-                sub_orders__isnull=True
+                id__in=affected_marketplace_order_ids,
+                sub_orders__isnull=True,
             ).delete()
 
             Customer.objects.filter(
-                marketplace_orders__isnull=True
+                id__in=affected_customer_ids,
+                marketplace_orders__isnull=True,
             ).delete()
 
         return {

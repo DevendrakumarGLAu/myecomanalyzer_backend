@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 import subprocess
 import os
 import re
@@ -6,16 +6,33 @@ from datetime import datetime
 from dotenv import load_dotenv
 import psycopg2
 
+from api.auth import require_staff_user
+
 load_dotenv()
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_staff_user)])
 
-# Source (Production) DB settings
-SOURCE_HOST = os.getenv("SOURCE_DB_HOST", "aws-1-ap-south-1.pooler.supabase.com")
+# Source (Production) DB settings — no insecure fallback defaults. These
+# previously hardcoded real production Supabase credentials directly in
+# source. Read lazily (not at import time) so a missing env var only fails
+# this router's own endpoints rather than crashing the whole app on startup.
+SOURCE_HOST = os.getenv("SOURCE_DB_HOST")
 SOURCE_PORT = os.getenv("SOURCE_DB_PORT", "6543")
 SOURCE_DB = os.getenv("SOURCE_DB_NAME", "postgres")
-SOURCE_USER = os.getenv("SOURCE_DB_USER", "postgres.rmjipqwaimxoyqownkyg")
-SOURCE_PASSWORD = os.getenv("SOURCE_DB_PASSWORD", "Devendra1997@")
+SOURCE_USER = os.getenv("SOURCE_DB_USER")
+SOURCE_PASSWORD = os.getenv("SOURCE_DB_PASSWORD")
+
+
+def _require_source_db_config():
+    missing = [
+        name for name, val in [
+            ("SOURCE_DB_HOST", SOURCE_HOST),
+            ("SOURCE_DB_USER", SOURCE_USER),
+            ("SOURCE_DB_PASSWORD", SOURCE_PASSWORD),
+        ] if not val
+    ]
+    if missing:
+        raise HTTPException(status_code=500, detail=f"Missing required env vars: {', '.join(missing)}")
 
 # Target (Local) DB settings
 TARGET_HOST = os.getenv("TARGET_DB_HOST", "localhost")
@@ -102,6 +119,7 @@ def python_fallback_dump(filepath: str):
 
 @router.get("/dump")
 def dump_database():
+    _require_source_db_config()
     try:
         # Ensure backup directory exists
         os.makedirs(BACKUP_DIR, exist_ok=True)
@@ -158,6 +176,9 @@ def dump_database():
                 pass
         raise HTTPException(status_code=500, detail=str(e))
 
+_BACKUP_FILENAME_RE = re.compile(r"^prod_backup_\d{8}_\d{6}\.sql$")
+
+
 @router.post("/restore")
 def restore_database(filename: str | None = None):
     try:
@@ -170,6 +191,12 @@ def restore_database(filename: str | None = None):
                 raise HTTPException(status_code=404, detail="No SQL backup files found.")
             files.sort()
             filename = files[-1]
+
+        # Only ever accept exactly the filename shape /dump generates — blocks
+        # path traversal (../..) and any other file on disk being targeted.
+        filename = os.path.basename(filename)
+        if not _BACKUP_FILENAME_RE.match(filename):
+            raise HTTPException(status_code=400, detail="Invalid backup filename")
 
         filepath = os.path.join(BACKUP_DIR, filename)
         if not os.path.exists(filepath):

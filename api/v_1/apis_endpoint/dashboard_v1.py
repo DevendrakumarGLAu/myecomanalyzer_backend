@@ -6,7 +6,7 @@ from api.auth import get_current_user
 from api.controllers.dashboard_controller import DashboardController
 from api.controllers.notification_controller import NotificationController
 from api.schemas.dashboard_schema import DashboardResponse
-from api.schemas.notification_schema import NotificationListResponse, MarkReadResponse
+from api.schemas.notification_schema import NotificationListResponse, MarkReadResponse, UnreadCountResponse
 
 router = APIRouter()
 
@@ -49,6 +49,13 @@ def get_notifications(
     )
 
     return result
+
+
+@router.get("/notifications/unread-count", response_model=UnreadCountResponse)
+def get_unread_notification_count(
+    current_user: User = Depends(get_current_user)
+):
+    return NotificationController.get_unread_count(current_user)
 
 
 @router.put("/notifications/{notification_id}/read", response_model=MarkReadResponse)

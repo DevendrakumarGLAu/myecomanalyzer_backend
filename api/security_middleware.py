@@ -16,6 +16,9 @@ logger = logging.getLogger("auth")
 security_logger = logging.getLogger("security")
 
 
+_DOCS_PATHS = {"/docs", "/redoc", "/openapi.json"}
+
+
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Add security headers to all responses"""
 
@@ -27,9 +30,23 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-        response.headers["Content-Security-Policy"] = "default-src 'self'"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+
+        # Swagger UI/ReDoc load their JS/CSS from a CDN and run an inline
+        # init script — "default-src 'self'" blocks both, which is why the
+        # docs page rendered blank. Relax CSP only for the docs routes
+        # themselves; every real API response keeps the strict policy.
+        if request.url.path in _DOCS_PATHS:
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-inline' cdn.jsdelivr.net; "
+                "style-src 'self' 'unsafe-inline' cdn.jsdelivr.net; "
+                "img-src 'self' data: fastapi.tiangolo.com cdn.jsdelivr.net; "
+                "connect-src 'self'"
+            )
+        else:
+            response.headers["Content-Security-Policy"] = "default-src 'self'"
 
         return response
 
@@ -131,8 +148,10 @@ def setup_security_middleware(app: FastAPI) -> None:
     # Error handling
     app.add_middleware(ErrorHandlingMiddleware)
 
-    # CORS - must be last
-    cors_origins = settings.CORS_ALLOWED_ORIGINS if hasattr(settings, 'CORS_ALLOWED_ORIGINS') else ["*"]
+    # CORS - must be last. Deny-by-default if the setting is ever missing —
+    # a wildcard fallback here combined with allow_credentials=True below
+    # would be the classic wildcard+credentials CORS misconfiguration.
+    cors_origins = settings.CORS_ALLOWED_ORIGINS if hasattr(settings, 'CORS_ALLOWED_ORIGINS') else []
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,

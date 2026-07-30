@@ -29,18 +29,22 @@ TRIAL_DAYS = config("TRIAL_DAYS", default=30, cast=int)
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-*%tb^8k6g2!mt%%)wi8p#h57gxj)&=tw!w-=9rk^2sees!e9n3'
+# No insecure default — fails loudly at startup if SECRET_KEY isn't set in .env,
+# rather than silently running with a committed, publicly-known key.
+SECRET_KEY = config("SECRET_KEY")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
-ALLOWED_HOSTS = [
-    "localhost",
-    "127.0.0.1",
-]
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:4200",
-    "http://127.0.0.1:4200",
-]
+DEBUG = config("DEBUG", default=False, cast=bool)
+ALLOWED_HOSTS = config(
+    "ALLOWED_HOSTS",
+    default="localhost,127.0.0.1",
+    cast=lambda v: [h.strip() for h in v.split(",") if h.strip()],
+)
+CORS_ALLOWED_ORIGINS = config(
+    "CORS_ALLOWED_ORIGINS",
+    default="http://localhost:4200,http://127.0.0.1:4200,https://marriage-biodata-lufw.onrender.com,https://myecomanalyzer-frontend.onrender.com",
+    cast=lambda v: [o.strip() for o in v.split(",") if o.strip()],
+)
 CORS_ALLOW_CREDENTIALS = True
 
 
@@ -72,7 +76,8 @@ INSTALLED_APPS = [
     'ai',
     'profit',
     'adsSpend',
-    
+    'platform_fees',
+
 ]
 
 MIDDLEWARE = [
@@ -210,10 +215,26 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # ====================================================================
 
 # JWT Configuration
-JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "devendrakumarglau")
+# No insecure default — a guessable fallback secret here would let anyone forge
+# valid access/refresh tokens if the env var were ever left unset.
+JWT_SECRET_KEY = config("JWT_SECRET_KEY")
 JWT_ALGORITHM = os.environ.get("JWT_ALGORITHM", "HS256")
 JWT_ACCESS_TOKEN_EXPIRE_MINUTES = int(os.environ.get("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", 1440))  # Default to 24 hours
 JWT_REFRESH_TOKEN_EXPIRE_DAYS = int(os.environ.get("JWT_REFRESH_TOKEN_EXPIRE_DAYS", 30))
+
+# OTP / Password Reset (used by api/controllers/password_reset_controller.py —
+# previously referenced here with no definition at all, which would crash at
+# import time)
+OTP_EXPIRY_MINUTES = config("OTP_EXPIRY_MINUTES", default=5, cast=int)
+OTP_MAX_ATTEMPTS = config("OTP_MAX_ATTEMPTS", default=5, cast=int)
+OTP_RESET_TOKEN_EXPIRY_MINUTES = config("OTP_RESET_TOKEN_EXPIRY_MINUTES", default=10, cast=int)
+OTP_RESEND_COOLDOWN_SECONDS = config("OTP_RESEND_COOLDOWN_SECONDS", default=60, cast=int)
+OTP_DEBUG_MODE = config("OTP_DEBUG_MODE", default=False, cast=bool)
+if OTP_DEBUG_MODE and not DEBUG:
+    # OTP_DEBUG_MODE echoes the plaintext OTP in the forgot-password response —
+    # never acceptable outside local dev, regardless of what env misconfiguration
+    # set it to True.
+    raise RuntimeError("OTP_DEBUG_MODE must not be enabled when DEBUG=False")
 
 # Password Policy
 PASSWORD_MIN_LENGTH = 8
@@ -250,11 +271,16 @@ SECURE_CONTENT_SECURITY_POLICY = {
 }
 X_FRAME_OPTIONS = "DENY"
 
-# Enhanced CORS for production
+# CSRF_TRUSTED_ORIGINS is safe to set regardless of DEBUG; ALLOWED_HOSTS is
+# already env-driven unconditionally above. SSL redirect stays production-only
+# since forcing HTTPS locally would break local http:// dev.
+CSRF_TRUSTED_ORIGINS = config(
+    "CSRF_TRUSTED_ORIGINS",
+    default="http://localhost",
+    cast=lambda v: [o.strip() for o in v.split(",") if o.strip()],
+)
 if not DEBUG:
     SECURE_SSL_REDIRECT = True
-    ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "localhost").split(",")
-    CSRF_TRUSTED_ORIGINS = os.environ.get("CSRF_TRUSTED_ORIGINS", "http://localhost").split(",")
 
 # Logging Configuration
 LOGGING = {
@@ -318,7 +344,9 @@ LOGGING = {
 }
 
 # Supabase S3 Storage Configuration
-SUPABASE_S3_ENDPOINT_URL = os.environ.get("SUPABASE_S3_ENDPOINT_URL", "https://rmjipqwaimxoyqownkyg.storage.supabase.co/storage/v1/s3")
+# No default — the previous fallback hardcoded this project's real storage
+# endpoint URL directly in source.
+SUPABASE_S3_ENDPOINT_URL = config("SUPABASE_S3_ENDPOINT_URL")
 SUPABASE_S3_ACCESS_KEY_ID = os.environ.get("SUPABASE_S3_ACCESS_KEY_ID", "")
 SUPABASE_S3_SECRET_ACCESS_KEY = os.environ.get("SUPABASE_S3_SECRET_ACCESS_KEY", "")
 SUPABASE_S3_REGION = os.environ.get("SUPABASE_S3_REGION", "ap-south-1")

@@ -98,17 +98,34 @@ class InvoiceExtractController:
             if marketplace_sub_order_id in line:
                 # Example line:
                 # 0O0-Z_wu 2.2 1 Pink 259318205301888448_1
+                #
+                # SKU and color can each be multiple words (e.g. "green bangles",
+                # "Rose Gold"), so a fixed parts[0]/parts[1]/... split misaligns
+                # every field once that happens. Anchor instead on the two tokens
+                # that are unambiguous: the trailing order-id token (the value we
+                # already matched above) and the quantity token, which is always a
+                # bare integer — sizes here always carry a decimal (e.g. "2.2"), so
+                # they never get mistaken for it.
 
                 parts = line.split()
 
-                if len(parts) < 5:
+                order_id_idx = next(
+                    (i for i, p in enumerate(parts) if marketplace_sub_order_id in p),
+                    len(parts) - 1,
+                )
+                row = parts[:order_id_idx]
+
+                qty_idx = next((i for i, p in enumerate(row) if p.isdigit()), None)
+                if qty_idx is None or qty_idx < 1:
                     continue
 
-                sku = parts[0]
-                size = parts[1]
-                quantity = int(parts[2]) if parts[2].isdigit() else 1
-                color = parts[3]
-                order_id = parts[4]
+                sku = " ".join(row[:qty_idx - 1])
+                size = row[qty_idx - 1]
+                quantity = int(row[qty_idx])
+                color = " ".join(row[qty_idx + 1:])
+
+                if not sku or not size or not color:
+                    continue
 
                 return sku, size, quantity, color
 
@@ -148,9 +165,6 @@ class InvoiceExtractController:
     # --------------------------------------------------
     @staticmethod
     def save_invoice_to_db(file_path, platform_code, current_user):
-        import pandas as pd
-        import os
-        error_file_url = None
         # Validate platform early and return an explicit error if not found
         try:
             platform = Platform.objects.get(code=platform_code)
@@ -422,26 +436,15 @@ class InvoiceExtractController:
                         "reason": str(e)
                     })
                     
-        if error_orders:
-            formatted_errors = []
-
-            for err in error_orders:
-                formatted_errors.append({
-                    "Order ID": err.get("order_id", ""),
-                    "SKU": err.get("sku", ""),
-                    "Size": err.get("size", ""),
-                    "Color": err.get("color", ""),
-                    "Error Reason": err.get("reason") or err.get("error", "")
-                })
-            df = pd.DataFrame(formatted_errors)
-            df = df.sort_values(by="Order ID")
-            # ✅ SAVE FILE
-            file_name = f"error_report.xlsx"
-            file_path = os.path.join("media", file_name)
-
-            df.to_excel(file_path, index=False)
-
-            error_file_url = "/media/" + file_name
+        # The error report is now built client-side (see
+        # shared/error-report-export.ts in the frontend) directly from
+        # error_orders below, on demand when the user clicks "Download
+        # Report" — not written to disk here. The previous version wrote to a
+        # single hardcoded shared filename ("media/error_report.xlsx") with
+        # no static file route serving it, and the frontend's <a href> link
+        # resolved against the frontend's own origin, not the backend's, so
+        # the download never actually worked — and had it worked, every
+        # user's report would have collided on that one shared file.
 
         return {
             "summary": {
@@ -458,7 +461,6 @@ class InvoiceExtractController:
             "exchange_orders": exchange_orders,
             "multi_quantity_orders": multi_quantity_orders,
             "error_orders": error_orders,
-            "error_file": error_file_url
         }
         
     def process_meesho_invoice(current_user,platform_code,page,limit,search,status,state,sku,start_date,end_date,sort_by,order):
@@ -999,8 +1001,28 @@ class InvoiceExtractController:
         # Remove quantity only when it appears after HSN
         # (Don't remove numbers like "Pack of 2 Hands")
 
-        # Remove trailing size like "- 2.6", "- 2.8", etc.
-        desc = re.sub(r"\s*-\s*\d+(?:\.\d+)?(?=\s|$)", "", desc)
+        # Remove trailing size — either numeric (bangle sizes like "- 2.6",
+        # "- 2.8") or a letter size (clothing sizes like "-L", "-M", "-XL",
+        # "-3XL"), since which one the seller uses varies by product.
+        desc = re.sub(
+            r"\s*-\s*(?:\d+(?:\.\d+)?|XXXL|XXL|XL|XS|S|M|L|[2-4]XL)(?=\s|$)",
+            "",
+            desc,
+            flags=re.IGNORECASE,
+        )
+
+        # A dangling trailing hyphen can be left over when its size value was
+        # already consumed by an earlier regex (e.g. a numeric size that fell
+        # in the 4-8 digit HSN range and got stripped above). Only strip a
+        # hyphen right at the very end — sellers do put hyphens inside the
+        # product name itself (e.g. "Multi-Color", "Red-White Bangle Set"),
+        # so this must not touch one anywhere else in the description.
+        desc = re.sub(r"\s*-\s*$", "", desc)
+
+        # Remove stray colons left behind once the table-column labels/values
+        # they separated (HSN/Qty/amount) get stripped above — a product name
+        # never legitimately needs one.
+        desc = re.sub(r"\s*:\s*", " ", desc)
 
         # Remove extra spaces
         desc = re.sub(r"\s+", " ", desc).strip()
@@ -1045,51 +1067,45 @@ class InvoiceExtractController:
             code__iexact=platform_code
         ).first()
 
-        normalized_name = InvoiceExtractController.normalize_product_name(description)
-
         product = None
 
-        # --------------------------------------------------
-        # 1. Find by catalog id (Meesho best practice)
-        # --------------------------------------------------
-        if catalog_id:
-            product = Product.objects.filter(
-                owner=owner,
-                catalog_id=catalog_id,
-            ).first()
-        catalog_value = catalog_id
-        if not catalog_value:
-            catalog_value = str(uuid.uuid4().int)[:9]
+        # catalog_id is never populated by the PDF import (nothing in
+        # parse_invoice_data extracts it, so this always arrives as None) — it's
+        # only used below as the new product's own catalog_id value, generating a
+        # random placeholder since PDF-derived products don't have a real one.
+        catalog_value = catalog_id or str(uuid.uuid4().int)[:9]
 
-        # 2. Find by normalized name
-        if not product and description:
-            normalized = InvoiceExtractController.normalize_product_name(description)
-            for p in Product.objects.filter(owner=owner, platform=platform):
-                if InvoiceExtractController.normalize_product_name(p.name) == normalized:
-                    product = p
-                    break
-        # 3. Find by existing variant
         category = Category.objects.first()
         color = color.strip().upper() if color else ""
         size = str(size).strip() if size else ""
         sku = sku.strip()
-        
-        # 4. Create only if still not found
-        
-        # 3. Find by existing variant (only if product not already found)
-        if not product:
+
+        # 1. Find by SKU — any existing variant with this SKU belongs to the same
+        # product even if its size/color differs from this invoice row. Without
+        # this, a new size for an already-known SKU had no way to be matched back
+        # to its product, so it fell through to creating a duplicate product
+        # instead of a new variant.
+        #
+        # A name-based fallback match used to also run here (matching any
+        # existing product whose normalized name equalled this one's). It's been
+        # removed — Meesho assigns a distinct SKU per color/catalog variant, but
+        # the PDF-extracted description is often generic and near-identical across
+        # those variants (e.g. two different colors of the same bangle set), so
+        # matching on name alone was merging genuinely different SKUs into one
+        # product (their variants ended up mixed together, e.g. product 7/8 in
+        # the products table). SKU is the only reliable identity signal here — a
+        # brand-new SKU should always become its own product, never get silently
+        # attached to an unrelated one.
+        if not product and sku:
             existing_variant = (
                 ProductVariant.objects.select_related("product")
-                .filter(
-                    sku__iexact=sku.strip(),
-                    size=str(size).strip(),
-                    color__iexact=color.strip(),
-                )
+                .filter(sku__iexact=sku, product__owner=owner, product__platform=platform)
                 .first()
             )
-
             if existing_variant:
                 product = existing_variant.product
+
+        # 2. Create only if still not found
         if not product:
             product = Product.objects.create(
                 catalog_id = catalog_value,
