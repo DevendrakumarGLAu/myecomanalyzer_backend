@@ -29,10 +29,6 @@ router.include_router(auth_router, prefix="/auth", tags=["Auth"])
 from api.password_reset_endpoints import router as password_reset_router
 router.include_router(password_reset_router)  # already prefixed /auth internally -> /api/v1/auth/forgot-password, etc.
 
-# forgot password (OTP via email or SMS)
-from api.password_reset_endpoints import router as password_reset_router
-router.include_router(password_reset_router)  # already prefixed /auth internally -> /api/v1/auth/forgot-password, etc.
-
 # category
 from api.v_1.apis_endpoint.categories_v1 import router as category_router
 router.include_router(category_router, prefix="/categories", tags=["Categories"])
@@ -64,6 +60,22 @@ router.include_router(dashboard_router, prefix="/dashboard", tags=["Dashboard"])
 # payments
 from api.v_1.apis_endpoint.payment_v1 import router as payment_router
 router.include_router(payment_router, prefix="/payments", tags=["Payments"])
+
+# platforms (list is any-authenticated-user; add is staff-only)
+from api.v_1.apis_endpoint.platforms_v1 import router as platforms_router
+router.include_router(platforms_router, prefix="/platforms", tags=["Platforms"])
+
+# platform fee slabs (staff-only — powers the public profit calculator)
+from api.v_1.apis_endpoint.platform_fee_slab_v1 import router as platform_fee_slab_router
+router.include_router(platform_fee_slab_router, prefix="/platform-fee-slabs", tags=["Platform Fee Slabs"])
+
+# product health score
+from api.v_1.apis_endpoint.product_health_score_v1 import router as health_score_router
+router.include_router(health_score_router, prefix="/products/health-score", tags=["Product Health Score"])
+
+# customer risk / fake-order report
+from api.v_1.apis_endpoint.customer_risk_v1 import router as customer_risk_router
+router.include_router(customer_risk_router, prefix="/customers/risk-report", tags=["Customer Risk Report"])
 
 
 # db dump

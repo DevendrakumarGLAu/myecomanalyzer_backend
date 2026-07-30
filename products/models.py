@@ -20,6 +20,13 @@ class Product(BaseModel):
 
     class Meta:
         db_table = "products"
+        indexes = [
+            # Matches get_all_products' exact filter+order shape
+            # (owner=X[, is_active=Y]).order_by("-id") — without this, that
+            # query and its COUNT(*) both fall back to scanning every row
+            # this owner has as the catalog grows.
+            models.Index(fields=["owner", "is_active", "-id"], name="products_owner_active_id_idx"),
+        ]
 
     def __str__(self):
         return self.name

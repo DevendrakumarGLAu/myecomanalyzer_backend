@@ -9,6 +9,7 @@ from api.schemas.payment_schema import PaymentTrendResponse, SkuProfitResponse
 
 router = APIRouter()
 
+
 @router.get("/trend", response_model=PaymentTrendResponse)
 def payment_trend(
     range: str = Query("7d", description="One of: 7d, 1m, 1y, custom"),

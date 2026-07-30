@@ -16,6 +16,9 @@ logger = logging.getLogger("auth")
 security_logger = logging.getLogger("security")
 
 
+_DOCS_PATHS = {"/docs", "/redoc", "/openapi.json"}
+
+
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Add security headers to all responses"""
 
@@ -47,6 +50,21 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Permissions-Policy"] = (
             "geolocation=(), microphone=(), camera=()"
         )
+
+        # Swagger UI/ReDoc load their JS/CSS from a CDN and run an inline
+        # init script — "default-src 'self'" blocks both, which is why the
+        # docs page rendered blank. Relax CSP only for the docs routes
+        # themselves; every real API response keeps the strict policy.
+        if request.url.path in _DOCS_PATHS:
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-inline' cdn.jsdelivr.net; "
+                "style-src 'self' 'unsafe-inline' cdn.jsdelivr.net; "
+                "img-src 'self' data: fastapi.tiangolo.com cdn.jsdelivr.net; "
+                "connect-src 'self'"
+            )
+        else:
+            response.headers["Content-Security-Policy"] = "default-src 'self'"
 
         return response
         # response.headers["Content-Security-Policy"] = "default-src 'self'"

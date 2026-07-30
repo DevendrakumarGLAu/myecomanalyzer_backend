@@ -15,6 +15,7 @@ from fastapi import APIRouter
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from api.router import router as api_v1_router, ai_router
 from api.security_middleware import setup_security_middleware
+from django.conf import settings
 from django.db import close_old_connections
 # F:\project\ecomm-profit\backend\api\router.py
 

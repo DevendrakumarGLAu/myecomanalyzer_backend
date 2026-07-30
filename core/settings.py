@@ -91,7 +91,8 @@ INSTALLED_APPS = [
     'ai',
     'profit',
     'adsSpend',
-    
+    'platform_fees',
+
 ]
 
 MIDDLEWARE = [

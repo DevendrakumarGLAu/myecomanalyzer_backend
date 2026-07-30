@@ -241,7 +241,13 @@ class SettlementUploadController:
                     )
 
                 print("ADS RECORDS TO INSERT:", len(ads_records))
-                
+                deduction_duration = None
+
+                if pd.notna(row.get("Deduction Duration")):
+                    deduction_duration = (
+                        pd.to_datetime(row.get("Deduction Duration"), errors="coerce")
+                        .date()
+                    )
 
                 if ads_records:
                     existing_ads = AdsSpend.objects.filter(
@@ -256,9 +262,14 @@ class SettlementUploadController:
 
                 new_records = [
                     r for r in ads_records
-                    if (r.campaign_id, r.deduction_duration.date() if r.deduction_duration else None)
-                    not in existing_set
+                    if (r.campaign_id, r.deduction_duration) not in existing_set
                 ]
+
+                # new_records = [
+                #     r for r in ads_records
+                #     if (r.campaign_id, r.deduction_duration.date() if r.deduction_duration else None)
+                #     not in existing_set
+                # ]
 
                 AdsSpend.objects.bulk_create(new_records, batch_size=1000)
 
@@ -594,18 +605,17 @@ class SettlementUploadController:
                 catalog_id=catalog_id
             ).first()
 
-        # 3. Find by normalized product name — without this, a product arriving
-        # with both a new SKU and no matching catalog_id had no way to be matched
-        # back to the product already created for it, so it was recreated as a
-        # duplicate product every time instead of getting a new variant/SKU.
-        if not product and product_name:
-            normalized = InvoiceExtractController.normalize_product_name(product_name)
-            for p in Product.objects.filter(owner=current_user, platform=platform_obj):
-                if InvoiceExtractController.normalize_product_name(p.name) == normalized:
-                    product = p
-                    break
+        # NOTE: a name-based fallback match used to live here (matching any
+        # existing product whose normalized name equalled this one's). It's been
+        # removed — Meesho assigns a distinct SKU per color/catalog variant, but
+        # the settlement sheet's product name is often generic and near-identical
+        # across those variants, so matching on name alone was merging genuinely
+        # different SKUs into one product (see the same fix in
+        # pdf_import_controlller.get_or_create_product_from_invoice). SKU and
+        # catalog_id are the only reliable identity signals here — a brand-new
+        # SKU should always become its own product.
 
-        # 4. Create only if still not found
+        # 3. Create only if still not found
         if not product:
             category = Category.objects.first()
 

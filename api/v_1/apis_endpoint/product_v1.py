@@ -31,7 +31,10 @@ def get_products(
 
 @router.get("/get/{product_id}", response_model=ProductResponse)
 def get_product(product_id: int, current_user: User = Depends(get_current_user)):
-    return ProductController.get_product_by_id(product_id, current_user)
+    result = ProductController.get_product_response_by_id(product_id, current_user)
+    if not result:
+        raise HTTPException(status_code=404, detail="Product not found")
+    return result
 
 @router.post("/add/", response_model=APIResponse)
 def add_product(payload: ProductRequest, current_user: User = Depends(get_current_user)):

@@ -165,9 +165,6 @@ class InvoiceExtractController:
     # --------------------------------------------------
     @staticmethod
     def save_invoice_to_db(file_path, platform_code, current_user):
-        import pandas as pd
-        import os
-        error_file_url = None
         # Validate platform early and return an explicit error if not found
         try:
             platform = Platform.objects.get(code=platform_code)
@@ -439,26 +436,15 @@ class InvoiceExtractController:
                         "reason": str(e)
                     })
                     
-        if error_orders:
-            formatted_errors = []
-
-            for err in error_orders:
-                formatted_errors.append({
-                    "Order ID": err.get("order_id", ""),
-                    "SKU": err.get("sku", ""),
-                    "Size": err.get("size", ""),
-                    "Color": err.get("color", ""),
-                    "Error Reason": err.get("reason") or err.get("error", "")
-                })
-            df = pd.DataFrame(formatted_errors)
-            df = df.sort_values(by="Order ID")
-            # ✅ SAVE FILE
-            file_name = f"error_report.xlsx"
-            file_path = os.path.join("media", file_name)
-
-            df.to_excel(file_path, index=False)
-
-            error_file_url = "/media/" + file_name
+        # The error report is now built client-side (see
+        # shared/error-report-export.ts in the frontend) directly from
+        # error_orders below, on demand when the user clicks "Download
+        # Report" — not written to disk here. The previous version wrote to a
+        # single hardcoded shared filename ("media/error_report.xlsx") with
+        # no static file route serving it, and the frontend's <a href> link
+        # resolved against the frontend's own origin, not the backend's, so
+        # the download never actually worked — and had it worked, every
+        # user's report would have collided on that one shared file.
 
         return {
             "summary": {
@@ -475,7 +461,6 @@ class InvoiceExtractController:
             "exchange_orders": exchange_orders,
             "multi_quantity_orders": multi_quantity_orders,
             "error_orders": error_orders,
-            "error_file": error_file_url
         }
         
     def process_meesho_invoice(current_user,platform_code,page,limit,search,status,state,sku,start_date,end_date,sort_by,order):
