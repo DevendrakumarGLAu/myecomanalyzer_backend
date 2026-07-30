@@ -22,11 +22,12 @@ from django.db import close_old_connections
 # Security scheme for Swagger
 security = HTTPBearer()
 
-# Swagger/ReDoc/OpenAPI schema are only served locally (DEBUG=True) — no API
-# docs or schema exposed on a deployed instance.
-docs_url = "/docs" if settings.DEBUG else None
-redoc_url = "/redoc" if settings.DEBUG else None
-openapi_url = "/openapi.json" if settings.DEBUG else None
+# Swagger/Redoc/OpenAPI docs will now require a Bearer token for authentication. You can provide the token in the "Authorize" button in Swagger UI or Redoc.
+# you are only need to use locally (DEBUG=True) and in production (DEBUG=False) you can use the token in the header of the request.
+docs_url = "/docs" if os.environ.get("DEBUG", "True") == "True" else None
+redoc_url = "/redoc" if os.environ.get("DEBUG", "True") == "True" else None
+openapi_url = "/openapi.json" if os.environ.get("DEBUG", "True") == "True" else None
+print("ENV DEBUG:", os.environ.get("DEBUG"))
 
 app = FastAPI(
     title="MyEcomAnalyzer API",

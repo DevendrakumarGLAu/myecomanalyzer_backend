@@ -1166,7 +1166,7 @@ class InvoiceExtractController:
                     color=normalized_color,
                     selling_price=selling_price or 0,
                     cost_price=0,
-                    stock=50,
+                    stock=1000,
                     shipping_cost=shipping_cost or 150,
                     rto_cost=rto_cost or 10,
                     is_auto_created=True,

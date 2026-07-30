@@ -24,6 +24,21 @@ if env_path.exists():
 
 TRIAL_DAYS = config("TRIAL_DAYS", default=30, cast=int)
 
+# OTP Configuration
+OTP_EXPIRY_MINUTES = config("OTP_EXPIRY_MINUTES", default=10, cast=int)
+OTP_MAX_ATTEMPTS = config("OTP_MAX_ATTEMPTS", default=5, cast=int)
+OTP_RESET_TOKEN_EXPIRY_MINUTES = config(
+    "OTP_RESET_TOKEN_EXPIRY_MINUTES",
+    default=15,
+    cast=int,
+)
+OTP_DEBUG_MODE = config("OTP_DEBUG_MODE", default=False, cast=bool)
+OTP_RESEND_COOLDOWN_SECONDS = config(
+    "OTP_RESEND_COOLDOWN_SECONDS",
+    default=60,
+    cast=int,
+)
+
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/

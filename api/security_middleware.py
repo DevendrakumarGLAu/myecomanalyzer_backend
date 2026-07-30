@@ -30,8 +30,26 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        if settings.DEBUG and (
+            request.url.path.startswith("/docs")
+            or request.url.path.startswith("/redoc")
+            or request.url.path.startswith("/openapi.json")
+        ):
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                "img-src 'self' data: https://fastapi.tiangolo.com;"
+            )
+        else:
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'"
+            )
+
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        response.headers["Permissions-Policy"] = (
+            "geolocation=(), microphone=(), camera=()"
+        )
 
         # Swagger UI/ReDoc load their JS/CSS from a CDN and run an inline
         # init script — "default-src 'self'" blocks both, which is why the
@@ -49,6 +67,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             response.headers["Content-Security-Policy"] = "default-src 'self'"
 
         return response
+        # response.headers["Content-Security-Policy"] = "default-src 'self'"
+        # response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        # response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+
+        # return response
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
