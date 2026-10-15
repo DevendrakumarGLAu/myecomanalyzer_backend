@@ -181,9 +181,11 @@ def _store_refresh_token_in_cookie(
     )
 
 
+# this end point is being used for signup in myecommeanalyse
 # ======================== ENDPOINTS ========================
 @router.post("/signup", response_model=TokenResponse)
 def signup(user_data: SignupRequest, request: Request) -> TokenResponse:
+    logger.info("Looking up for signup")
     """
     Register new user and return access + refresh tokens.
 
@@ -268,7 +270,7 @@ def signup(user_data: SignupRequest, request: Request) -> TokenResponse:
             # 3. GET DEFAULT ROLE
             # -------------------------
             try:
-                role = Role.objects.get(name="partner")  # default for new users
+                role = Role.objects.get(name__iexact="GUEST")  # default for new users
             except Role.DoesNotExist:
                 raise HTTPException(status_code=500, detail="Default role not configured")
 
