@@ -7,6 +7,7 @@ without touching the password-reset controller:
 - sms:   AWS SNS         (SmsOTPProvider) — boto3 is already a project
   dependency (used for S3 uploads elsewhere), so this needs no new package.
 """
+from asyncio.log import logger
 import smtplib
 from email.mime.text import MIMEText
 
@@ -45,36 +46,48 @@ class SmsOTPProvider:
         self.secret_key = config("AWS_SECRET_ACCESS_KEY", default="")
         self.sender_id = config("AWS_SNS_SENDER_ID", default="")
 
+    # def send(self, to_mobile, otp):
+    #     import boto3
+
+    #     if not self.access_key or not self.secret_key:
+    #         raise RuntimeError("AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY are not configured")
+
+    #     client = boto3.client(
+    #         "sns",
+    #         region_name=self.region,
+    #         aws_access_key_id=self.access_key,
+    #         aws_secret_access_key=self.secret_key,
+    #     )
+
+    #     attributes = {
+    #         "AWS.SNS.SMS.SMSType": {"DataType": "String", "StringValue": "Transactional"},
+    #     }
+    #     if self.sender_id:
+    #         attributes["AWS.SNS.SMS.SenderID"] = {"DataType": "String", "StringValue": self.sender_id}
+
+    #     # SNS requires E.164 format (e.g. +919876543210) — UserProfile.mobile_number
+    #     # isn't currently validated to that format, so a malformed number will
+    #     # raise here rather than silently failing.
+    #     client.publish(
+    #         PhoneNumber=to_mobile,
+    #         Message=f"Your password reset OTP is {otp}. It expires shortly.",
+    #         MessageAttributes=attributes,
+    #     )
+
     def send(self, to_mobile, otp):
-        import boto3
-
-        if not self.access_key or not self.secret_key:
-            raise RuntimeError("AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY are not configured")
-
-        client = boto3.client(
-            "sns",
-            region_name=self.region,
-            aws_access_key_id=self.access_key,
-            aws_secret_access_key=self.secret_key,
+        print(f"[DEV ONLY] SMS OTP for {to_mobile}: {otp}")
+        from decouple import config
+        debug_mode = config(
+            "OTP_DEBUG_MODE",
+            default=False,
+            cast=bool
         )
 
-        attributes = {
-            "AWS.SNS.SMS.SMSType": {"DataType": "String", "StringValue": "Transactional"},
-        }
-        if self.sender_id:
-            attributes["AWS.SNS.SMS.SenderID"] = {"DataType": "String", "StringValue": self.sender_id}
-
-        # SNS requires E.164 format (e.g. +919876543210) — UserProfile.mobile_number
-        # isn't currently validated to that format, so a malformed number will
-        # raise here rather than silently failing.
-        client.publish(
-            PhoneNumber=to_mobile,
-            Message=f"Your password reset OTP is {otp}. It expires shortly.",
-            MessageAttributes=attributes,
-        )
-
-
+        if debug_mode:
+            print(f"[DEV ONLY] SMS OTP for {to_mobile}: {otp}")
+            return
 def get_otp_provider(channel):
+    logger.info("Attempting OTP delivery through channel=%s", channel)
     if channel == "email":
         return EmailOTPProvider()
     if channel == "sms":

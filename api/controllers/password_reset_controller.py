@@ -99,11 +99,32 @@ class PasswordResetController:
         )
 
         try:
-            get_otp_provider(channel).send(identifier, otp)
+            # get_otp_provider(channel).send(identifier, otp)
+            if OTP_DEBUG_MODE and channel == "sms":
+                # Local development only: simulate SMS delivery.
+                print(
+                    f"[DEV ONLY] SMS OTP for {identifier}: {otp}",
+                    flush=True,
+                )
+            else:
+                get_otp_provider(channel).send(identifier, otp)
+
         except Exception:
-            # The OTP is already stored — a transient delivery failure
-            # shouldn't turn into a 500; the user can just request a resend.
-            security_logger.exception(f"Failed to deliver OTP via {channel} to {identifier}")
+            security_logger.exception(
+                "OTP delivery failed for channel=%s",
+                channel,
+            )
+
+            # Mark this OTP as used because it was not delivered.
+            PasswordResetOTP.objects.filter(
+                user=user,
+                channel=channel,
+                identifier=identifier,
+                is_used=False,
+            ).update(is_used=True)
+
+            raise RuntimeError("OTP delivery failed")
+
 
         return {
             "success": True,

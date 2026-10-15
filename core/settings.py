@@ -25,19 +25,31 @@ if env_path.exists():
 TRIAL_DAYS = config("TRIAL_DAYS", default=30, cast=int)
 
 # OTP Configuration
-OTP_EXPIRY_MINUTES = config("OTP_EXPIRY_MINUTES", default=10, cast=int)
-OTP_MAX_ATTEMPTS = config("OTP_MAX_ATTEMPTS", default=5, cast=int)
-OTP_RESET_TOKEN_EXPIRY_MINUTES = config(
-    "OTP_RESET_TOKEN_EXPIRY_MINUTES",
-    default=15,
-    cast=int,
+EMAIL_BACKEND = os.getenv(
+    "EMAIL_BACKEND",
+    "django.core.mail.backends.smtp.EmailBackend",
 )
-OTP_DEBUG_MODE = config("OTP_DEBUG_MODE", default=False, cast=bool)
-OTP_RESEND_COOLDOWN_SECONDS = config(
-    "OTP_RESEND_COOLDOWN_SECONDS",
-    default=60,
-    cast=int,
+
+EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True").lower() == "true"
+
+DEFAULT_FROM_EMAIL = os.getenv(
+    "DEFAULT_FROM_EMAIL",
+    EMAIL_HOST_USER,
 )
+
+OTP_EXPIRY_MINUTES = int(os.getenv("OTP_EXPIRY_MINUTES", "5"))
+OTP_MAX_ATTEMPTS = int(os.getenv("OTP_MAX_ATTEMPTS", "5"))
+OTP_RESET_TOKEN_EXPIRY_MINUTES = int(
+    os.getenv("OTP_RESET_TOKEN_EXPIRY_MINUTES", "10")
+)
+OTP_RESEND_COOLDOWN_SECONDS = int(
+    os.getenv("OTP_RESEND_COOLDOWN_SECONDS", "30")
+)
+OTP_DEBUG_MODE = os.getenv("OTP_DEBUG_MODE", "False").lower() == "true"
 
 
 # Quick-start development settings - unsuitable for production
