@@ -42,9 +42,12 @@ def forgot_password(req: ForgotPasswordRequest, request: Request) -> ForgotPassw
         return ForgotPasswordResponse(**result)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        security_logger.error(f"forgot-password error: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to process forgot-password request")
+    except Exception:
+        security_logger.exception("Forgot-password request failed")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to process forgot-password request",
+        )
 
 
 @router.post("/verify-otp", response_model=VerifyOtpResponse)
